@@ -3164,12 +3164,21 @@ test('Text.withGlyphs promotes repeated reads to a cached callback-scoped inspec
     label.withGlyphs((layout) => layout.glyphCount),
     5,
   );
-  assert.equal(instrumentedGlyph.measureCrossings, 1, 'a hot borrower refreshes once after a semantic edit');
+  assert.equal(instrumentedGlyph.measureCrossings, 1, 'the first borrow after an edit remains sparse');
   assert.equal(
     label.withGlyphs((layout) => layout.glyphCount),
     5,
   );
-  assert.equal(instrumentedGlyph.measureCrossings, 1, 'the refreshed inspection stays cached');
+  assert.equal(instrumentedGlyph.measureCrossings, 2, 'the second unchanged borrow promotes the new revision');
+  assert.equal(
+    label.withGlyphs((layout) => layout.glyphCount),
+    5,
+  );
+  assert.equal(instrumentedGlyph.measureCrossings, 2, 'the promoted revision stays cached');
+
+  const measurement = label.measure();
+  assert.equal(measurement.x, undefined, 'measure does not expose the canonical inspection columns');
+  assert.equal(measurement.glyphIds, undefined, 'measure cannot mutate the private glyph cache');
 
   label.renderOrder = 7;
   instrumentedGlyph.reset();
@@ -3180,6 +3189,33 @@ test('Text.withGlyphs promotes repeated reads to a cached callback-scoped inspec
   assert.equal(instrumentedGlyph.measureCrossings, 0, 'order-only changes preserve positioned glyph columns');
 
   group.dispose();
+  label.dispose();
+  font.dispose();
+});
+
+test('Text.withGlyphs keeps sparse borrowing when canonical inspection exceeds the output limit', async (t) => {
+  const three = await createThreeTestHandle(t, {
+    ...ThreeConfig,
+    commands: {
+      ...ThreeConfig.commands,
+      limits: { ...ThreeConfig.commands.limits, maxOutputBytes: 4_096 },
+    },
+  });
+  const font = await loadFont({ baked: { bytes: await readFile(fontUrl) } }, bitmap({ strikes: [16] }));
+  const label = three.createText({ font, text: 'capacity '.repeat(512) });
+
+  instrumentedGlyph.reset();
+  const first = label.withGlyphs((layout) => layout.glyphAt(0).glyphId);
+  const second = label.withGlyphs((layout) => layout.glyphAt(0).glyphId);
+  const third = label.withGlyphs((layout) => layout.glyphAt(0).glyphId);
+  assert.equal(first, second);
+  assert.equal(second, third);
+  assert.equal(
+    instrumentedGlyph.borrowedGlyphReads,
+    3,
+    'a capacity-limited canonical inspection falls back once and remains on sparse scalar reads',
+  );
+
   label.dispose();
   font.dispose();
 });

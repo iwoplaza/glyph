@@ -1,6 +1,7 @@
 import { alignSpansToClusters } from '../formatted-text.js';
 import { textShaperAbi } from '../generated/text-shaper-abi.js';
 import { GlyphError } from '../glyph-error.js';
+import { GlyphEngineStatusError } from '../engine-error.js';
 import {
   copyGlyphLayoutInspection,
   type BorrowedGlyphLayout,
@@ -48,7 +49,7 @@ import type {
   PlanTransport,
 } from './handle-state.js';
 import { RenderPlanView, type RenderPlanTable } from './plan-view.js';
-import { readPlannerLayouts, readPlannerMeasurements } from './layout-query-view.js';
+import { measurementFromLayoutInspection, readPlannerLayouts, readPlannerMeasurements } from './layout-query-view.js';
 import { createBorrowedGlyphLayout, createInspectionBorrowedGlyphLayout } from './borrowed-layout-view.js';
 import type { PortableResource } from '../config/resources.js';
 import { reuseOrCreateTextPropertySnapshot } from '../config/text-property.js';
@@ -358,7 +359,7 @@ interface RetainedTextState {
   committed: ResolvedTextOptions | undefined;
   measurement: ParagraphLayoutSummary | undefined;
   inspection: GlyphLayoutInspection | undefined;
-  inspectionBorrowPreferred: boolean;
+  inspectionBorrowMode: 'sparse-first' | 'promotion-ready' | 'sparse-only';
 }
 
 interface CommittedFlowRegion {
@@ -580,7 +581,7 @@ class RenderPlannerImpl {
       committed: undefined,
       measurement: undefined,
       inspection: undefined,
-      inspectionBorrowPreferred: false,
+      inspectionBorrowMode: 'sparse-first',
     };
     try {
       this.#validateAggregateLimits(state);
@@ -645,6 +646,7 @@ class RenderPlannerImpl {
     state.geometryDirty = geometryDirty;
     state.measurement = undefined;
     state.inspection = undefined;
+    state.inspectionBorrowMode = 'sparse-first';
     if (previousOrder !== nextOrder) {
       this.#baseOrderValidationPending = true;
       this.#structureRevision = checkedNextStructureRevision(this.#structureRevision);
@@ -711,7 +713,15 @@ class RenderPlannerImpl {
     if (typeof read !== 'function') throw new TypeError('borrowed glyph inspection callback must be a function');
     let active = true;
     let glyphs: BorrowedGlyphLayout;
-    const inspection = state.inspection ?? (state.inspectionBorrowPreferred ? this.#queryInspection(state) : undefined);
+    let inspection = state.inspection;
+    if (inspection === undefined && state.inspectionBorrowMode === 'promotion-ready') {
+      try {
+        inspection = this.#queryInspection(state);
+      } catch (error) {
+        if (!(error instanceof GlyphEngineStatusError) || error.statusCode !== 'result-too-large') throw error;
+        state.inspectionBorrowMode = 'sparse-only';
+      }
+    }
     if (inspection !== undefined) {
       glyphs = createInspectionBorrowedGlyphLayout(inspection, () => {
         if (!active) throw new Error('borrowed glyph layout has expired');
@@ -727,7 +737,7 @@ class RenderPlannerImpl {
           throw new Error('borrowed glyph layout has expired');
         }
       });
-      state.inspectionBorrowPreferred = true;
+      if (state.inspectionBorrowMode === 'sparse-first') state.inspectionBorrowMode = 'promotion-ready';
       this.#adoptMeasuredBindings(state);
     }
     const leaveBorrow = this.#handleState._enterBorrowedPlan();
@@ -919,7 +929,7 @@ class RenderPlannerImpl {
       for (const state of this.#texts) {
         const layout = layouts.get(state.paragraphId);
         if (layout === undefined) continue;
-        state.measurement = layout;
+        state.measurement = measurementFromLayoutInspection(layout);
         state.inspection = layout;
       }
       return;
@@ -952,7 +962,7 @@ class RenderPlannerImpl {
     const layout = readPlannerLayouts(publication).get(state.paragraphId);
     if (layout === undefined) throw new Error('text engine returned no layout inspection for retained text');
     this.#adoptMeasuredBindings(state);
-    state.measurement = layout;
+    state.measurement = measurementFromLayoutInspection(layout);
     state.inspection = layout;
     return layout;
   }

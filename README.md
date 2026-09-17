@@ -183,8 +183,8 @@ Glyph is pre-release; these labels describe feature maturity, not a frozen publi
 | Editorial columns | 🟡 Partial | Sequential column flow; automatic column balancing is not implemented. |
 | Text decorations | 🟡 Partial | Solid underline, overline, and strikethrough. Double, dotted, dashed, and wavy styles are not implemented. |
 | CJK | 🟡 Partial | Horizontal shaping and layout; large-coverage paging and vertical writing are future work. |
-| Direct TypeGPU rendering and shaders | 🧪&nbsp;Exp. | Bitmap, MSDF, and Slug in caller-owned WebGPU render passes, plus standalone shader exports. |
-| TypeGPU shaders in Three.js | 🧪&nbsp;Exp. | WebGPU and WebGL2 adapters; full visual parity with the native TSL path is not yet established. |
+| Direct TypeGPU rendering and shaders | 🧪 Experimental | Bitmap, MSDF, and Slug in caller-owned WebGPU render passes, plus standalone shader exports. |
+| TypeGPU shaders in Three.js | 🧪 Experimental | WebGPU and WebGL2 adapters; full visual parity with the native TSL path is not yet established. |
 
 See the [package reference](.agents/docs/packages/glyph.md) for capability details and verification evidence.
 

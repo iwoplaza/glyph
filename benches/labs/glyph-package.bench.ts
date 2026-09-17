@@ -3,6 +3,7 @@ import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { assert, bench, group } from '@pmndrs/labs';
+import * as THREE from 'three/webgpu';
 
 const packageRoot = process.env.GLYPH_LABS_PACKAGE_ROOT;
 if (packageRoot === undefined) {
@@ -56,6 +57,34 @@ function createParagraph(text = paragraphText, width = 600) {
 function disposeParagraph(created: ReturnType<typeof createParagraph>): void {
   created.textGroup.dispose();
   created.paragraph.dispose();
+  created.root.dispose();
+}
+
+function createLabels(count = 100) {
+  const root = glyph.handle(
+    `labs:labels:${String(nextHandle++)}`,
+    defineThreeConfig({ capacity: { size: count * 24, policy: 'grow' } }),
+  );
+  const textGroup = root.createTextGroup();
+  const scene = new THREE.Scene();
+  const labels = Array.from({ length: count }, (_, index) =>
+    root.createText({
+      font,
+      text: `label ${String(index).padStart(3, '0')}`,
+      style: { fontSize: 16 },
+      constraints: { width: { mode: 'exact', size: 160 } },
+    }),
+  );
+  textGroup.add(...labels);
+  scene.add(textGroup);
+  textGroup.updateMatrixWorld(true);
+  if (textGroup.error !== undefined) throw textGroup.error;
+  return { labels, root, scene, textGroup };
+}
+
+function disposeLabels(created: ReturnType<typeof createLabels>): void {
+  created.textGroup.dispose();
+  for (const label of created.labels) label.dispose();
   created.root.dispose();
 }
 
@@ -130,6 +159,47 @@ group('packaged public API @core', () => {
 });
 
 group('retained batching @publication', () => {
+  bench('measure 100 unchanged retained labels @cached', function* () {
+    const created = createLabels();
+    const expectedGlyphs = created.labels.reduce((total, label) => total + label.measure().glyphCount, 0);
+    const glyphCount = yield () => created.labels.reduce((total, label) => total + label.measure().glyphCount, 0);
+    assert.equal(glyphCount, expectedGlyphs);
+    disposeLabels(created);
+  });
+
+  bench('copy glyphs from 100 unchanged retained labels @cached', function* () {
+    const created = createLabels();
+    const expectedGlyphs = created.labels.reduce((total, label) => total + label.glyphs().glyphCount, 0);
+    const glyphCount = yield () => created.labels.reduce((total, label) => total + label.glyphs().glyphCount, 0);
+    assert.equal(glyphCount, expectedGlyphs);
+    disposeLabels(created);
+  });
+
+  bench('borrow glyphs from 100 unchanged retained labels @cached', function* () {
+    const created = createLabels();
+    const expectedGlyphs = created.labels.reduce(
+      (total, label) => total + label.withGlyphs((glyphs) => glyphs.glyphCount),
+      0,
+    );
+    const glyphCount = yield () =>
+      created.labels.reduce((total, label) => total + label.withGlyphs((glyphs) => glyphs.glyphCount), 0);
+    assert.equal(glyphCount, expectedGlyphs);
+    disposeLabels(created);
+  });
+
+  bench('edit and measure one of 100 retained labels @layout', function* () {
+    const created = createLabels();
+    const target = created.labels[0]!;
+    let alternate = false;
+    const glyphCount = yield () => {
+      alternate = !alternate;
+      target.text = alternate ? 'edited alpha' : 'edited bravo';
+      return target.measure().glyphCount;
+    };
+    assert(glyphCount > 0, 'measurement must contain glyphs');
+    disposeLabels(created);
+  });
+
   bench('publish 128 retained Text instances', function* () {
     const count = 128;
     const root = glyph.handle(

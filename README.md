@@ -160,7 +160,7 @@ import { bitmapFragment, bitmapVertexSnapped } from '@pmndrs/glyph/shaders/typeg
 
 ## Feature status
 
-Glyph is pre-release; these labels describe feature maturity, not a frozen public API.
+Glyph is pre-release. These labels describe feature maturity, not a frozen public API.
 **✅ Stable** is the supported baseline, **🟡 Partial** has the gaps listed below, and **🧪 Experimental** is available but still being evaluated.
 
 | Feature | Status | Support and limitations |
@@ -172,19 +172,19 @@ Glyph is pre-release; these labels describe feature maturity, not a frozen publi
 | Text measurement | ✅ Stable | Text bounds, font metrics, and per-glyph layout queries. |
 | Editorial flow and polygon cut-outs | ✅ Stable | Authored regions and exclusions, projected 3D contours, and drop caps. |
 | Icon fonts | ✅ Stable | Font-based icons, raster subsetting, and glyph-name maps. |
-| Break-apart glyphs | ✅ Stable | Detached glyph and decoration copies with independent transforms; copies do not follow later source-text edits. |
-| Bitmap rendering | ✅ Stable | Baked size-specific strikes; no outline or shadow effects. |
+| Break-apart glyphs | ✅ Stable | Detached glyph and decoration copies with independent transforms. Copies do not follow later source-text edits. |
+| Bitmap rendering | ✅ Stable | Baked size-specific strikes. No outline or shadow effects. |
 | MSDF rendering | ✅ Stable | MTSDF atlases with outline and hard-shadow effects. |
-| Slug rendering | ✅ Stable | Vector-outline rendering; no outline or shadow effects. |
-| Three.js, React Three Fiber, and TSL | ✅ Stable | WebGPU and WebGL2 through `WebGPURenderer`; standalone TSL shaders are also available. Classic `WebGLRenderer` is not supported. |
+| Slug rendering | ✅ Stable | Vector-outline rendering. No outline or shadow effects. |
+| Three.js, React Three Fiber, and TSL | ✅ Stable | WebGPU and WebGL2 through `WebGPURenderer`. Standalone TSL shaders are also available. Classic `WebGLRenderer` is not supported. |
 | Custom renderer integration | ✅ Stable | Renderer-neutral `GlyphConfig` API and custom raster/baker extensions. |
 | Wasm engine and SIMD kernels | ✅ Stable | HarfRust shaping and retained Rust layout with SIMD-optimized kernels. |
 | Runtime and offline font baking | ✅ Stable | Node API/CLI baking and browser Worker baking for Bitmap, MSDF, and Slug. |
-| Editorial columns | 🟡 Partial | Sequential column flow; automatic column balancing is not implemented. |
+| Editorial columns | 🟡 Partial | Sequential column flow. Automatic column balancing is not implemented. |
 | Text decorations | 🟡 Partial | Solid underline, overline, and strikethrough. Double, dotted, dashed, and wavy styles are not implemented. |
-| CJK | 🟡 Partial | Horizontal shaping and layout; large-coverage paging and vertical writing are future work. |
+| CJK | 🟡 Partial | Horizontal shaping and layout. Large-coverage paging and vertical writing are future work. |
 | Direct TypeGPU rendering and shaders | 🧪 Experimental | Bitmap, MSDF, and Slug in caller-owned WebGPU render passes, plus standalone shader exports. |
-| TypeGPU shaders in Three.js | 🧪 Experimental | WebGPU and WebGL2 adapters; full visual parity with the native TSL path is not yet established. |
+| TypeGPU shaders in Three.js | 🧪 Experimental | WebGPU and WebGL2 adapters. Full visual parity with the native TSL path is not yet established. |
 
 See the [package reference](.agents/docs/packages/glyph.md) for capability details and verification evidence.
 

@@ -239,6 +239,7 @@ struct PlannerState {
     order_sort_scratch: Vec<(u64, u32)>,
     rank_sort_scratch: Vec<(u64, u32)>,
     ranked_paragraphs: Vec<RankedParagraph>,
+    reorder_stable_ids: Vec<u32>,
     lifecycle_prepared: bool,
     lifecycle_changed: bool,
     compositing_independent: bool,
@@ -1414,6 +1415,83 @@ impl TextEngine {
                     request.limits.max_paragraphs,
                 )?;
             }
+            if !checkpoint
+                && adopted.is_none()
+                && planner.lifecycle_changed
+                && order_only_request(request)
+                && request.compositing_independent == planner.compositing_independent
+                && !planner_has_decorations(planner)
+            {
+                let mut stable_ids = core::mem::take(&mut planner.reorder_stable_ids);
+                stable_ids.clear();
+                let stable_id_result = (|| {
+                    let required =
+                        planner
+                            .active_order()
+                            .iter()
+                            .try_fold(0usize, |total, ordered| {
+                                let paragraph = planner
+                                    .paragraph(ordered.id)
+                                    .ok_or(EngineError::InvalidRequest)?;
+                                total
+                                    .checked_add(paragraph.state.positioned.active().glyphs().len())
+                                    .ok_or(EngineError::ResultTooLarge)
+                            })?;
+                    stable_ids
+                        .try_reserve(required)
+                        .map_err(|_| EngineError::ResultTooLarge)?;
+                    for ordered in planner.active_order() {
+                        let paragraph = planner
+                            .paragraph(ordered.id)
+                            .ok_or(EngineError::InvalidRequest)?;
+                        for glyph in paragraph.state.positioned.active().glyphs() {
+                            let binding = font_bindings
+                                .iter()
+                                .find(|binding| binding.handle == glyph.binding_handle)
+                                .ok_or_else(|| gather_error(GatherError::FontBindingMissing))?;
+                            if binding
+                                .binding
+                                .select(glyph.glyph_id, glyph.font_size, glyph.raster_pixel_ratio)
+                                .is_none()
+                            {
+                                continue;
+                            }
+                            if glyph.stable_id == 0 {
+                                return Err(EngineError::InvalidRequest);
+                            }
+                            stable_ids.push(glyph.stable_id);
+                        }
+                    }
+                    Ok(())
+                })();
+                let reorder_prepared = match stable_id_result {
+                    Ok(()) => planner.plan.prepare_reorder(
+                        codec,
+                        CapabilitySetId(request.capability_set),
+                        &stable_ids,
+                        publication_generation,
+                    ),
+                    Err(error) => {
+                        planner.reorder_stable_ids = stable_ids;
+                        return Err(error);
+                    }
+                };
+                planner.reorder_stable_ids = stable_ids;
+                if reorder_prepared.map_err(plan_error)? {
+                    planner
+                        .placement_slots
+                        .prepare_reuse(publication_generation)
+                        .map_err(placement_slot_error)?;
+                    planner.pending_placement_slot_count = planner.placement_slot_count;
+                    planner.session_placement_rows.clear();
+                    planner.pending_next_glyph_id = next_glyph_id;
+                    planner.pending_next_content_revision = next_content_revision;
+                    planner.pending_compositing_independent = request.compositing_independent;
+                    *gather_cache = None;
+                    *prepared_gather_cache = None;
+                    return Ok(());
+                }
+            }
             planner.prepare_semantic_input_spans(request)?;
             for order_index in 0..planner.active_semantic_order().len() {
                 let paragraph_id = planner.active_semantic_order()[order_index].id;
@@ -1810,6 +1888,18 @@ fn planner_has_decorations(planner: &PlannerState) -> bool {
             !positioned.decorations().is_empty()
         })
     })
+}
+
+fn order_only_request(request: UpdateRequest<'_>) -> bool {
+    request.paragraph_mutations.len() == 0
+        && request.paragraph_order_mutations.len() != 0
+        && request.text_mutations.len() == 0
+        && request.style_mutations.len() == 0
+        && request.geometry.constraint_count() == 0
+        && request.geometry.region_count() == 0
+        && request.geometry.exclusion_count() == 0
+        && request.geometry.inline_object_count() == 0
+        && request.semantic_view_mask == 0
 }
 
 /// Emits the measurement (and optional layout-inspection) semantic records for one

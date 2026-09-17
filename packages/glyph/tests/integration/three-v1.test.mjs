@@ -368,6 +368,11 @@ test('Text renderOrder ranks grouped paragraphs while standalone Text keeps Thre
   scene.updateMatrixWorld(true);
   assert.deepEqual(groupedSequence(), [...authored].reverse());
   assert.equal(instrumentedGlyph.crossings, 1, 'one paragraph-order transaction crosses into Rust');
+  assert.deepEqual(
+    instrumentedGlyph.latestPlanCounts(),
+    { buffers: 0, draws: 0, patches: 9, primitives: 0, resources: 0, retirements: 0 },
+    'an order-only frame publishes only writes into the existing physical buffers',
+  );
   assert.equal(instrumentedGlyph.measureCrossings, 0, 'order-only publication reuses measurements');
   assert.equal(boundingBoxPublications, 0, 'order-only publication does not republish cached bounds');
   assert.deepEqual(
@@ -386,6 +391,18 @@ test('Text renderOrder ranks grouped paragraphs while standalone Text keeps Thre
   instrumentedGlyph.reset();
   scene.updateMatrixWorld(true);
   assert.equal(instrumentedGlyph.crossings, 0, 'an unchanged ranked group does no sorting or Wasm work');
+
+  labels[0].renderOrder = 0;
+  labels[1].renderOrder = 1;
+  labels[2].renderOrder = 2;
+  instrumentedGlyph.reset();
+  scene.updateMatrixWorld(true);
+  assert.deepEqual(groupedSequence(), authored, 'the aggregate draw survives a reverse-order round trip');
+  assert.deepEqual(
+    instrumentedGlyph.latestPlanCounts(),
+    { buffers: 0, draws: 0, patches: 9, primitives: 0, resources: 0, retirements: 0 },
+    'the reverse-order round trip also stays patch-only',
+  );
 
   const loose = three.createText({ font, text: 'D' });
   loose.renderOrder = 9;
@@ -2680,6 +2697,7 @@ function instrumentNextGlyphEngine() {
   let latestSemanticByteLength = 0;
   let latestSemanticRecordCount = 0;
   let latestSemanticParagraphCount = 0;
+  let latestPlanCounts;
   let borrowedGlyphReads = 0;
   let latestBatchCount = 0;
   let latestBatchRootIds = [];
@@ -2697,6 +2715,14 @@ function instrumentNextGlyphEngine() {
       latestSemanticRecordCount = memory.getUint32(resultPointer + result.semanticViewCount, true);
       latestSemanticByteLength = latestSemanticRecordCount * semantic.size;
       latestSemanticParagraphCount = 0;
+      latestPlanCounts = {
+        buffers: memory.getUint32(resultPointer + result.bufferCount, true),
+        draws: memory.getUint32(resultPointer + result.drawCount, true),
+        patches: memory.getUint32(resultPointer + result.patchCount, true),
+        primitives: memory.getUint32(resultPointer + result.primitiveCount, true),
+        resources: memory.getUint32(resultPointer + result.resourceCount, true),
+        retirements: memory.getUint32(resultPointer + result.retirementCount, true),
+      };
       const semanticOffset = memory.getUint32(resultPointer + result.semanticViewsOffset, true);
       for (let index = 0; index < latestSemanticRecordCount; index += 1) {
         const record = resultPointer + semanticOffset + index * semantic.size;
@@ -2795,6 +2821,10 @@ function instrumentNextGlyphEngine() {
     },
     get latestBatchRootIds() {
       return [...latestBatchRootIds];
+    },
+    latestPlanCounts() {
+      assert.ok(latestPlanCounts, 'a render-plan result must have been captured');
+      return { ...latestPlanCounts };
     },
     get latestAcknowledgedGeneration() {
       assert.ok(latestRequest, 'a text update request must have been captured');

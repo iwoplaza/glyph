@@ -549,6 +549,8 @@ function workloadHasAnimation(workload: string): boolean {
 
 function workloadAmountLabel(workload: string): string | undefined {
   switch (workload) {
+    case 'billboard-labels':
+      return 'Label density';
     case 'off-axis-3d':
       return 'Perspective intensity';
     case 'dynamic-layout':

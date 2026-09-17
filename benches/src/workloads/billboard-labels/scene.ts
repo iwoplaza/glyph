@@ -11,8 +11,8 @@ import {
 
 /** Fewest labels the shell carries, so the orbit still crosses depth at density zero. */
 const BILLBOARD_MINIMUM_LABELS = 32;
-/** Labels added at full density. 32..544 spans a readable scene through a genuinely dense one. */
-const BILLBOARD_DENSITY_RANGE = 512;
+/** Labels added at full density. 32..1000 spans a readable scene through the normal high-density target. */
+const BILLBOARD_DENSITY_RANGE = 968;
 /** Shell radius as a fraction of the smaller viewport axis, so the sphere stays fully on screen. */
 const BILLBOARD_RADIUS_RATIO = 0.32;
 /** Orbit distance as a multiple of the shell radius. Close enough that perspective separates depth. */

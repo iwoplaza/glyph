@@ -242,6 +242,7 @@ interface LoadedFormatFont {
 
 interface PendingConfigurationUpdate {
   configuration: ComparisonWorkloadConfiguration;
+  rasterPixelRatio: number | undefined;
   viewportChanged: boolean;
   readonly waiters: Array<{
     readonly resolve: () => void;
@@ -254,7 +255,7 @@ interface ComparisonWorkloadRuntime {
   frame(context: PersistentRenderFrameContext): void;
   panBy(deltaX: number, deltaY: number): { readonly deltaX: number; readonly deltaY: number } | void;
   resetView(): void;
-  resize(width: number, height: number): void;
+  resize(viewport: PersistentRenderViewport): void;
   telemetry(snapshot: LiveFrameTelemetrySnapshot, viewport: PersistentRenderViewport): void;
   update(configuration: ComparisonWorkloadConfiguration): Promise<void>;
   zoomBy(factor: number): void;
@@ -294,7 +295,7 @@ export function createComparisonWorkloadPersistentScene(
       active().telemetry(snapshot, viewport);
     },
     resize(viewport) {
-      active().resize(viewport.width, viewport.height);
+      active().resize(viewport);
     },
     async deactivate() {
       if (deactivated) return;
@@ -713,10 +714,15 @@ async function createComparisonWorkloadRuntime(
     const pendingUpdates: PendingConfigurationUpdate[] = [];
     let updateDrain: Promise<void> | undefined;
 
-    async function applyConfiguration(next: ComparisonWorkloadConfiguration, viewportChanged: boolean): Promise<void> {
+    async function applyConfiguration(
+      next: ComparisonWorkloadConfiguration,
+      viewportChanged: boolean,
+      rasterPixelRatio: number | undefined,
+    ): Promise<void> {
       canvasSurface.setGridVisible(next.showGrid);
       if (next.fontFixture !== configuration.fontFixture) await switchSelectedFontFixture(next.fontFixture);
       if (configuration.workload === 'zoom-text' && next.workload === 'zoom-text' && viewportChanged) {
+        if (rasterPixelRatio !== undefined) applyRetainedTextRasterPixelRatio(entries, rasterPixelRatio);
         configuration = next;
         committedContentWidth = undefined;
         revision += 1;
@@ -726,6 +732,7 @@ async function createComparisonWorkloadRuntime(
           viewportWidth: width,
         });
         applyRetainedConfiguration(entries, technique, configuration);
+        if (rasterPixelRatio !== undefined) publishWorkloadTexts(batchRoot, entries);
         return;
       }
       if (
@@ -736,12 +743,14 @@ async function createComparisonWorkloadRuntime(
           next.iconGridView !== configuration.iconGridView)
       ) {
         if (iconGridInstance === undefined) throw new Error('icon grid retained update lost its workload instance');
+        if (rasterPixelRatio !== undefined) applyRetainedTextRasterPixelRatio(entries, rasterPixelRatio);
         await iconGridInstance.reconfigure(configuration, next, { height, width }, scene);
         applyIconGridCamera(camera, iconGridInstance.view());
         configuration = next;
         committedContentWidth = undefined;
         revision += 1;
         applyRetainedConfiguration(entries, technique, configuration);
+        if (rasterPixelRatio !== undefined) publishWorkloadTexts(batchRoot, entries);
         return;
       }
       const nextContentWidth = comparisonWorkloadContentWidth(next, width);
@@ -752,7 +761,8 @@ async function createComparisonWorkloadRuntime(
         persistentContext.resetTelemetry();
         return;
       }
-      if (contentWidthChanged || fontSizeChanged) {
+      if (rasterPixelRatio !== undefined) applyRetainedTextRasterPixelRatio(entries, rasterPixelRatio);
+      if (contentWidthChanged || fontSizeChanged || rasterPixelRatio !== undefined) {
         const retainedUpdateStarted = timingBegin();
         const readyStarted = performance.now();
         const retainedWidths = contentWidthChanged
@@ -777,7 +787,7 @@ async function createComparisonWorkloadRuntime(
         // Layout metrics are demanded before explicit publication so the query mask rides on the pending semantic
         // update. The following scene publication sees clean Rust state and only synchronizes renderer transforms.
         const layoutStarted = timingBegin();
-        layoutEntries(entries, next, width, height);
+        if (contentWidthChanged || fontSizeChanged) layoutEntries(entries, next, width, height);
         timingEnd('text.update-and-measure', layoutStarted);
         const readyAt = performance.now();
         const publishStarted = timingBegin();
@@ -809,7 +819,7 @@ async function createComparisonWorkloadRuntime(
           if (closing || disposed) break;
           const current = pendingUpdates.shift()!;
           try {
-            await applyConfiguration(current.configuration, current.viewportChanged);
+            await applyConfiguration(current.configuration, current.viewportChanged, current.rasterPixelRatio);
             for (const waiter of current.waiters) waiter.resolve();
           } catch (error) {
             for (const waiter of current.waiters) waiter.reject(error);
@@ -826,7 +836,11 @@ async function createComparisonWorkloadRuntime(
       });
     }
 
-    function enqueueUpdate(next: ComparisonWorkloadConfiguration, viewportChanged = false): Promise<void> {
+    function enqueueUpdate(
+      next: ComparisonWorkloadConfiguration,
+      viewportChanged = false,
+      rasterPixelRatio?: number,
+    ): Promise<void> {
       if (closing || disposed) {
         return Promise.reject(new DOMException('The comparison workload scene is disposed', 'AbortError'));
       }
@@ -841,7 +855,7 @@ async function createComparisonWorkloadRuntime(
       // Queued, never merged: collapsing configurations would measure the queue's cost instead of the workload's.
       // Callers debounce their own input.
       return new Promise<void>((resolve, reject) => {
-        pendingUpdates.push({ configuration: next, viewportChanged, waiters: [{ resolve, reject }] });
+        pendingUpdates.push({ configuration: next, rasterPixelRatio, viewportChanged, waiters: [{ resolve, reject }] });
         startUpdateDrain();
       });
     }
@@ -1074,16 +1088,30 @@ async function createComparisonWorkloadRuntime(
     animationEpoch = performance.now();
 
     return {
-      resize(nextWidth, nextHeight) {
+      resize(nextViewport) {
         if (closing || disposed) return;
-        const validatedWidth = positive(nextWidth, 'comparison workload width');
-        const validatedHeight = positive(nextHeight, 'comparison workload height');
-        if (validatedWidth === width && validatedHeight === height) return;
-        width = validatedWidth;
-        height = validatedHeight;
-        canvasSurface.resize(width, height);
-        resizeWorkloadCamera(camera, width, height);
-        void enqueueUpdate(requestedConfiguration, true).catch(onError);
+        const validatedWidth = positive(nextViewport.width, 'comparison workload width');
+        const validatedHeight = positive(nextViewport.height, 'comparison workload height');
+        const validatedDpr = positive(nextViewport.dpr, 'comparison workload DPR');
+        const viewportChanged = validatedWidth !== width || validatedHeight !== height;
+        const rasterPixelRatioChanged = validatedDpr !== rendererViewport.pixelRatio;
+        if (!viewportChanged && !rasterPixelRatioChanged) return;
+        rendererViewport = {
+          drawingBufferHeight: nextViewport.drawingBufferHeight,
+          drawingBufferWidth: nextViewport.drawingBufferWidth,
+          pixelRatio: validatedDpr,
+        };
+        if (viewportChanged) {
+          width = validatedWidth;
+          height = validatedHeight;
+          canvasSurface.resize(width, height);
+          resizeWorkloadCamera(camera, width, height);
+        }
+        void enqueueUpdate(
+          requestedConfiguration,
+          viewportChanged,
+          rasterPixelRatioChanged ? validatedDpr : undefined,
+        ).catch(onError);
       },
       panBy(deltaX, deltaY) {
         if (closing || disposed) return;
@@ -1306,6 +1334,17 @@ function applyRetainedTextLayout(
 
 export function applyRetainedTextFontSize(texts: readonly WorkloadText[], fontSize: number): void {
   applyRetainedTextLayout(texts, undefined, fontSize);
+}
+
+/** Keeps retained Text raster selection in lockstep with the renderer's physical-pixel ratio. */
+export function applyRetainedTextRasterPixelRatio(
+  entries: readonly Pick<WorkloadEntry, 'labelText' | 'text'>[],
+  rasterPixelRatio: number,
+): void {
+  for (const { labelText, text } of entries) {
+    text.rasterPixelRatio = rasterPixelRatio;
+    if (labelText !== undefined && labelText !== text) labelText.rasterPixelRatio = rasterPixelRatio;
+  }
 }
 
 export function comparisonWorkloadContentWidth(

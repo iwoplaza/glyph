@@ -96,6 +96,29 @@ export function readPlannerMeasurements(publication: PlanPublication): ReadonlyM
   return measurements;
 }
 
+/** Keeps the private per-glyph columns of a canonical inspection out of the public measurement cache. */
+export function measurementFromLayoutInspection(layout: GlyphLayoutInspection): ParagraphLayoutSummary {
+  return Object.freeze({
+    width: layout.width,
+    height: layout.height,
+    contentWidth: layout.contentWidth,
+    contentHeight: layout.contentHeight,
+    firstBaseline: layout.firstBaseline,
+    lastBaseline: layout.lastBaseline,
+    ascent: layout.ascent,
+    descent: layout.descent,
+    lineHeight: layout.lineHeight,
+    inkBounds: layout.inkBounds,
+    overflowed: layout.overflowed,
+    minContentWidth: layout.minContentWidth,
+    maxContentWidth: layout.maxContentWidth,
+    glyphCount: layout.glyphCount,
+    lineCount: layout.lineCount,
+    missingGlyphCount: layout.missingGlyphCount,
+    lines: layout.lines,
+  });
+}
+
 /** Copies one explicitly requested retained layout out of borrowed Wasm publication memory. */
 export function readPlannerLayouts(publication: PlanPublication): ReadonlyMap<number, GlyphLayoutInspection> {
   const view = new SemanticViewReader(publication);

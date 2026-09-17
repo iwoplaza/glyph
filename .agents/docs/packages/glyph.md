@@ -5,7 +5,7 @@ description: Implements portable font loading, retained Rust shaping and layout,
 resource: ../../../packages/glyph
 workspace_package: '@pmndrs/glyph'
 documentation_type: reference
-source_digest: 'sha256:d0ae6d5a8b3a5b542b5f61e0bc7c0c77f7485554829c18a958b3cb023fc3087b'
+source_digest: 'sha256:0cf7139b3ad652c1297c34b48f46dbf77d5a1296dcc73b154c7c92f5f352ea08'
 tags: [package, public-api, rust, wasm, threejs, typography]
 sources:
   - id: manifest
@@ -572,6 +572,13 @@ and omit the sideband when scope and rank are unchanged. An ungrouped
 `Text.renderOrder` retains ordinary Three draw-mesh meaning. Paragraph rank is deliberately absent from glyph storage and
 draw keys: compatible spans and grouped paragraphs therefore coalesce by resource, material, and fixed paint layer, with
 under-decoration, glyph, and over-decoration layers preserving CSS paint order.
+When a rank-only permutation keeps the committed Codec, capability, one-batch storage topology, and renderable stable-ID
+set, Rust copies the committed physical records into their new order and publishes write patches only. It transactionally
+updates its internal aggregate primitive/draw spans but does not republish unchanged buffers, resources, primitives,
+draws, or retirements. Recordless source glyphs remain in retained semantic state but are excluded from the renderable-ID
+permutation exactly as they are from Codec output. Any incompatible topology falls back to ordinary retained compilation.
+The packed-artifact Labs case over 1,000 labels measured 6.62 ms to 3.85 ms p50 (-41.8%, p=.002) with the other 18 matched
+benchmarks neutral.
 Core preflights uniqueness only when a paragraph is created or its base lifecycle order changes, and validates the final
 nonremoved desired set rather than each update in isolation. Atomic base-order swaps therefore remain valid, duplicate
 final slots fail before serialization, and rank-only Billboard frames avoid the scan entirely; Rust retains the same

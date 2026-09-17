@@ -41,6 +41,8 @@ function formatLabel(technique: RasterFormatName): 'Bitmap' | 'MSDF' | 'Slug' {
 
 function workloadAmountLabel(workload: string, amount: number): string | undefined {
   switch (workload) {
+    case 'billboard-labels':
+      return `Label density · ${amount}%`;
     case 'off-axis-3d':
       return `Perspective intensity · ${amount}%`;
     case 'dynamic-layout':

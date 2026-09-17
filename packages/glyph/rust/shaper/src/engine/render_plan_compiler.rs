@@ -134,6 +134,29 @@ impl RenderPlanCompiler {
         Ok(())
     }
 
+    pub(crate) fn prepare_reorder(
+        &mut self,
+        codec: &ValidatedCodec,
+        capability_set: CapabilitySetId,
+        stable_ids: &[u32],
+        publication_generation: u32,
+    ) -> Result<bool, RenderPlanCompilerError> {
+        if self.prepared_strategy != PreparedStrategy::None {
+            return Err(RenderPlanCompilerError::AlreadyPrepared);
+        }
+        if !self.ordered.prepare_reorder(
+            codec,
+            capability_set,
+            stable_ids,
+            publication_generation,
+        )? {
+            return Ok(false);
+        }
+        self.session.prepare_reuse()?;
+        self.prepared_strategy = PreparedStrategy::Ordered;
+        Ok(true)
+    }
+
     pub(crate) fn prepare_session(
         &mut self,
         input: SessionPlacementInput<'_>,

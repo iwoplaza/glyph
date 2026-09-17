@@ -368,6 +368,11 @@ test('Text renderOrder ranks grouped paragraphs while standalone Text keeps Thre
   scene.updateMatrixWorld(true);
   assert.deepEqual(groupedSequence(), [...authored].reverse());
   assert.equal(instrumentedGlyph.crossings, 1, 'one paragraph-order transaction crosses into Rust');
+  assert.deepEqual(
+    instrumentedGlyph.latestPlanCounts(),
+    { buffers: 0, draws: 0, patches: 9, primitives: 0, resources: 0, retirements: 0 },
+    'an order-only frame publishes only writes into the existing physical buffers',
+  );
   assert.equal(instrumentedGlyph.measureCrossings, 0, 'order-only publication reuses measurements');
   assert.equal(boundingBoxPublications, 0, 'order-only publication does not republish cached bounds');
   assert.deepEqual(
@@ -386,6 +391,18 @@ test('Text renderOrder ranks grouped paragraphs while standalone Text keeps Thre
   instrumentedGlyph.reset();
   scene.updateMatrixWorld(true);
   assert.equal(instrumentedGlyph.crossings, 0, 'an unchanged ranked group does no sorting or Wasm work');
+
+  labels[0].renderOrder = 0;
+  labels[1].renderOrder = 1;
+  labels[2].renderOrder = 2;
+  instrumentedGlyph.reset();
+  scene.updateMatrixWorld(true);
+  assert.deepEqual(groupedSequence(), authored, 'the aggregate draw survives a reverse-order round trip');
+  assert.deepEqual(
+    instrumentedGlyph.latestPlanCounts(),
+    { buffers: 0, draws: 0, patches: 9, primitives: 0, resources: 0, retirements: 0 },
+    'the reverse-order round trip also stays patch-only',
+  );
 
   const loose = three.createText({ font, text: 'D' });
   loose.renderOrder = 9;
@@ -2680,6 +2697,7 @@ function instrumentNextGlyphEngine() {
   let latestSemanticByteLength = 0;
   let latestSemanticRecordCount = 0;
   let latestSemanticParagraphCount = 0;
+  let latestPlanCounts;
   let borrowedGlyphReads = 0;
   let latestBatchCount = 0;
   let latestBatchRootIds = [];
@@ -2697,6 +2715,14 @@ function instrumentNextGlyphEngine() {
       latestSemanticRecordCount = memory.getUint32(resultPointer + result.semanticViewCount, true);
       latestSemanticByteLength = latestSemanticRecordCount * semantic.size;
       latestSemanticParagraphCount = 0;
+      latestPlanCounts = {
+        buffers: memory.getUint32(resultPointer + result.bufferCount, true),
+        draws: memory.getUint32(resultPointer + result.drawCount, true),
+        patches: memory.getUint32(resultPointer + result.patchCount, true),
+        primitives: memory.getUint32(resultPointer + result.primitiveCount, true),
+        resources: memory.getUint32(resultPointer + result.resourceCount, true),
+        retirements: memory.getUint32(resultPointer + result.retirementCount, true),
+      };
       const semanticOffset = memory.getUint32(resultPointer + result.semanticViewsOffset, true);
       for (let index = 0; index < latestSemanticRecordCount; index += 1) {
         const record = resultPointer + semanticOffset + index * semantic.size;
@@ -2795,6 +2821,10 @@ function instrumentNextGlyphEngine() {
     },
     get latestBatchRootIds() {
       return [...latestBatchRootIds];
+    },
+    latestPlanCounts() {
+      assert.ok(latestPlanCounts, 'a render-plan result must have been captured');
+      return { ...latestPlanCounts };
     },
     get latestAcknowledgedGeneration() {
       assert.ok(latestRequest, 'a text update request must have been captured');
@@ -3020,7 +3050,7 @@ test('Text.measure answers attached first-frame state without traversing matrice
   fontDomain.dispose();
 });
 
-test('Text.measure retains lifecycle context but serializes only pending paragraph ranks', async (t) => {
+test('Text.measure retains unpublished lifecycle but skips published paragraph upserts', async (t) => {
   const three = await createThreeTestHandle(t);
   const font = await loadFont({ baked: { bytes: await readFile(fontUrl) } }, bitmap({ strikes: [16] }));
   const scene = new THREE.Scene();
@@ -3035,7 +3065,7 @@ test('Text.measure retains lifecycle context but serializes only pending paragra
   instrumentedGlyph.reset();
   assert.ok(first.measure().glyphCount > 0);
   const semanticQueryCounts = instrumentedGlyph.latestMeasurementRequestCounts();
-  assert.equal(semanticQueryCounts.paragraph, 2, 'a semantic query retains the complete paragraph lifecycle');
+  assert.equal(semanticQueryCounts.paragraph, 0, 'a published target needs no repeated paragraph lifecycle rows');
   assert.equal(semanticQueryCounts.paragraphOrder, 0, 'a semantic query does not resend stable rank rows');
 
   first.renderOrder = 2;
@@ -3070,30 +3100,18 @@ test('Text.withGlyphs demand-reads scalar records only inside one synchronous bo
   const font = await loadFont({ baked: { bytes: await readFile(fontUrl) } }, bitmap({ strikes: [16] }));
   const label = three.createText({ font, text: 'Borrowed glyph records wrap across two lines' });
   label.constraints = { width: { mode: 'exact', size: 140 } };
-  const owned = label.glyphs();
   instrumentedGlyph.reset();
   let escaped;
+  let glyphCount = 0;
+  const selected = [];
   const answer = Object.freeze({ answer: 42 });
   const returned = label.withGlyphs((layout) => {
     escaped = layout;
-    assert.equal(layout.glyphCount, owned.glyphCount);
-    for (const index of [0, owned.glyphCount - 1]) {
+    glyphCount = layout.glyphCount;
+    for (const index of [0, glyphCount - 1]) {
       const glyphRecord = layout.glyphAt(index);
-      assert.equal(glyphRecord.stableId, owned.glyphStableIds[index]);
-      assert.equal(glyphRecord.fontHandle, owned.fontHandles[owned.glyphFontSlots[index]]);
-      assert.equal(glyphRecord.glyphId, owned.glyphIds[index]);
-      assert.equal(glyphRecord.cluster, owned.clusters[index]);
-      assert.equal(glyphRecord.bidiLevel, owned.glyphBidiLevels[index]);
-      assert.equal(glyphRecord.fontSize, owned.glyphFontSizes[index]);
-      assert.equal(glyphRecord.x, owned.x[index]);
-      assert.equal(glyphRecord.y, owned.y[index]);
-      assert.equal(glyphRecord.advance, owned.glyphAdvances[index]);
-      assert.equal(glyphRecord.inkX, owned.glyphInkX[index]);
-      assert.equal(glyphRecord.inkY, owned.glyphInkY[index]);
-      assert.equal(glyphRecord.inkWidth, owned.glyphInkWidths[index]);
-      assert.equal(glyphRecord.inkHeight, owned.glyphInkHeights[index]);
-      assert.equal(glyphRecord.flags, owned.glyphFlags[index]);
       assert.equal(Object.isFrozen(glyphRecord), true);
+      selected.push([index, glyphRecord]);
     }
     assert.throws(() => label.set({ text: 'reentrant mutation' }), /cannot be reentered/);
     assert.throws(() => label.measure(), /cannot be reentered/);
@@ -3104,6 +3122,24 @@ test('Text.withGlyphs demand-reads scalar records only inside one synchronous bo
   assert.equal(returned, answer, 'the callback result retains its identity');
   assert.equal(instrumentedGlyph.latestSemanticRecordCount, 0, 'borrow setup serializes no semantic records');
   assert.equal(instrumentedGlyph.borrowedGlyphReads, 2, 'only explicitly selected glyphs cross the Wasm ABI');
+  const owned = label.glyphs();
+  assert.equal(glyphCount, owned.glyphCount);
+  for (const [index, glyphRecord] of selected) {
+    assert.equal(glyphRecord.stableId, owned.glyphStableIds[index]);
+    assert.equal(glyphRecord.fontHandle, owned.fontHandles[owned.glyphFontSlots[index]]);
+    assert.equal(glyphRecord.glyphId, owned.glyphIds[index]);
+    assert.equal(glyphRecord.cluster, owned.clusters[index]);
+    assert.equal(glyphRecord.bidiLevel, owned.glyphBidiLevels[index]);
+    assert.equal(glyphRecord.fontSize, owned.glyphFontSizes[index]);
+    assert.equal(glyphRecord.x, owned.x[index]);
+    assert.equal(glyphRecord.y, owned.y[index]);
+    assert.equal(glyphRecord.advance, owned.glyphAdvances[index]);
+    assert.equal(glyphRecord.inkX, owned.glyphInkX[index]);
+    assert.equal(glyphRecord.inkY, owned.glyphInkY[index]);
+    assert.equal(glyphRecord.inkWidth, owned.glyphInkWidths[index]);
+    assert.equal(glyphRecord.inkHeight, owned.glyphInkHeights[index]);
+    assert.equal(glyphRecord.flags, owned.glyphFlags[index]);
+  }
   assert.equal(label.text, 'Borrowed glyph records wrap across two lines');
   assert.throws(() => escaped.glyphCount, /expired/);
   assert.throws(() => escaped.glyphAt(0), /expired/);
@@ -3121,6 +3157,94 @@ test('Text.withGlyphs demand-reads scalar records only inside one synchronous bo
   assert.throws(() => label.withGlyphs(async () => 42), /must answer synchronously/);
   label.text = 'mutation succeeds after borrow release';
   assert.equal(label.measure().glyphCount, 38);
+
+  label.dispose();
+  font.dispose();
+});
+
+test('Text.withGlyphs promotes repeated reads to a cached callback-scoped inspection', async (t) => {
+  const three = await createThreeTestHandle(t);
+  const font = await loadFont({ baked: { bytes: await readFile(fontUrl) } }, bitmap({ strikes: [16] }));
+  const scene = new THREE.Scene();
+  const group = three.createTextGroup();
+  const label = three.createText({ font, text: 'Committed glyph records' });
+  group.add(label);
+  scene.add(group);
+  scene.updateMatrixWorld(true);
+  glyph.shape();
+
+  instrumentedGlyph.reset();
+  const firstGlyphId = label.withGlyphs((layout) => layout.glyphAt(0).glyphId);
+  const secondGlyphId = label.withGlyphs((layout) => layout.glyphAt(0).glyphId);
+  assert.equal(firstGlyphId, secondGlyphId);
+  assert.equal(instrumentedGlyph.measureCrossings, 2, 'the second borrow promotes one canonical inspection');
+  assert.equal(instrumentedGlyph.borrowedGlyphReads, 1, 'the promoted borrow reads its scalar from cached columns');
+
+  instrumentedGlyph.reset();
+  assert.equal(
+    label.withGlyphs((layout) => layout.glyphAt(0).glyphId),
+    firstGlyphId,
+  );
+  assert.equal(instrumentedGlyph.measureCrossings, 0, 'unchanged promoted borrows stay inside JS');
+  assert.equal(instrumentedGlyph.borrowedGlyphReads, 0);
+
+  label.text = 'Dirty';
+  instrumentedGlyph.reset();
+  assert.equal(
+    label.withGlyphs((layout) => layout.glyphCount),
+    5,
+  );
+  assert.equal(instrumentedGlyph.measureCrossings, 1, 'the first borrow after an edit remains sparse');
+  assert.equal(
+    label.withGlyphs((layout) => layout.glyphCount),
+    5,
+  );
+  assert.equal(instrumentedGlyph.measureCrossings, 2, 'the second unchanged borrow promotes the new revision');
+  assert.equal(
+    label.withGlyphs((layout) => layout.glyphCount),
+    5,
+  );
+  assert.equal(instrumentedGlyph.measureCrossings, 2, 'the promoted revision stays cached');
+
+  const measurement = label.measure();
+  assert.equal(measurement.x, undefined, 'measure does not expose the canonical inspection columns');
+  assert.equal(measurement.glyphIds, undefined, 'measure cannot mutate the private glyph cache');
+
+  label.renderOrder = 7;
+  instrumentedGlyph.reset();
+  assert.equal(
+    label.withGlyphs((layout) => layout.glyphCount),
+    5,
+  );
+  assert.equal(instrumentedGlyph.measureCrossings, 0, 'order-only changes preserve positioned glyph columns');
+
+  group.dispose();
+  label.dispose();
+  font.dispose();
+});
+
+test('Text.withGlyphs keeps sparse borrowing when canonical inspection exceeds the output limit', async (t) => {
+  const three = await createThreeTestHandle(t, {
+    ...ThreeConfig,
+    commands: {
+      ...ThreeConfig.commands,
+      limits: { ...ThreeConfig.commands.limits, maxOutputBytes: 4_096 },
+    },
+  });
+  const font = await loadFont({ baked: { bytes: await readFile(fontUrl) } }, bitmap({ strikes: [16] }));
+  const label = three.createText({ font, text: 'capacity '.repeat(512) });
+
+  instrumentedGlyph.reset();
+  const first = label.withGlyphs((layout) => layout.glyphAt(0).glyphId);
+  const second = label.withGlyphs((layout) => layout.glyphAt(0).glyphId);
+  const third = label.withGlyphs((layout) => layout.glyphAt(0).glyphId);
+  assert.equal(first, second);
+  assert.equal(second, third);
+  assert.equal(
+    instrumentedGlyph.borrowedGlyphReads,
+    3,
+    'a capacity-limited canonical inspection falls back once and remains on sparse scalar reads',
+  );
 
   label.dispose();
   font.dispose();

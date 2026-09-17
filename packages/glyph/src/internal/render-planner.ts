@@ -1,6 +1,7 @@
 import { alignSpansToClusters } from '../formatted-text.js';
 import { textShaperAbi } from '../generated/text-shaper-abi.js';
 import { GlyphError } from '../glyph-error.js';
+import { GlyphEngineStatusError } from '../engine-error.js';
 import {
   copyGlyphLayoutInspection,
   type BorrowedGlyphLayout,
@@ -48,8 +49,8 @@ import type {
   PlanTransport,
 } from './handle-state.js';
 import { RenderPlanView, type RenderPlanTable } from './plan-view.js';
-import { readPlannerLayouts, readPlannerMeasurements } from './layout-query-view.js';
-import { createBorrowedGlyphLayout } from './borrowed-layout-view.js';
+import { measurementFromLayoutInspection, readPlannerLayouts, readPlannerMeasurements } from './layout-query-view.js';
+import { createBorrowedGlyphLayout, createInspectionBorrowedGlyphLayout } from './borrowed-layout-view.js';
 import type { PortableResource } from '../config/resources.js';
 import { reuseOrCreateTextPropertySnapshot } from '../config/text-property.js';
 import type { ParagraphId, ResourceHandle } from './glyph-id.js';
@@ -358,6 +359,7 @@ interface RetainedTextState {
   committed: ResolvedTextOptions | undefined;
   measurement: ParagraphLayoutSummary | undefined;
   inspection: GlyphLayoutInspection | undefined;
+  inspectionBorrowMode: 'sparse-first' | 'promotion-ready' | 'sparse-only';
 }
 
 interface CommittedFlowRegion {
@@ -579,6 +581,7 @@ class RenderPlannerImpl {
       committed: undefined,
       measurement: undefined,
       inspection: undefined,
+      inspectionBorrowMode: 'sparse-first',
     };
     try {
       this.#validateAggregateLimits(state);
@@ -643,6 +646,7 @@ class RenderPlannerImpl {
     state.geometryDirty = geometryDirty;
     state.measurement = undefined;
     state.inspection = undefined;
+    state.inspectionBorrowMode = 'sparse-first';
     if (previousOrder !== nextOrder) {
       this.#baseOrderValidationPending = true;
       this.#structureRevision = checkedNextStructureRevision(this.#structureRevision);
@@ -707,19 +711,35 @@ class RenderPlannerImpl {
   _withGlyphs<Result>(state: RetainedTextState, read: (glyphs: BorrowedGlyphLayout) => Result): Result {
     this.#assertTextQueryable(state);
     if (typeof read !== 'function') throw new TypeError('borrowed glyph inspection callback must be a function');
-    const publication = this.#transport.borrowParagraphLayout(
-      this.#queryTextRequest(state, textShaperAbi.engine.semanticViewMasks.borrowedLayout),
-      state.paragraphId,
-      this.#limits.maxOutputBytes,
-    );
     let active = true;
-    const assertActive = (): void => {
-      if (!active || this.#transport.isExpired(publication.publication)) {
-        throw new Error('borrowed glyph layout has expired');
+    let glyphs: BorrowedGlyphLayout;
+    let inspection = state.inspection;
+    if (inspection === undefined && state.inspectionBorrowMode === 'promotion-ready') {
+      try {
+        inspection = this.#queryInspection(state);
+      } catch (error) {
+        if (!(error instanceof GlyphEngineStatusError) || error.statusCode !== 'result-too-large') throw error;
+        state.inspectionBorrowMode = 'sparse-only';
       }
-    };
-    const glyphs = createBorrowedGlyphLayout(this.#transport, publication, assertActive);
-    this.#adoptMeasuredBindings(state);
+    }
+    if (inspection !== undefined) {
+      glyphs = createInspectionBorrowedGlyphLayout(inspection, () => {
+        if (!active) throw new Error('borrowed glyph layout has expired');
+      });
+    } else {
+      const publication = this.#transport.borrowParagraphLayout(
+        this.#queryTextRequest(state, textShaperAbi.engine.semanticViewMasks.borrowedLayout),
+        state.paragraphId,
+        this.#limits.maxOutputBytes,
+      );
+      glyphs = createBorrowedGlyphLayout(this.#transport, publication, () => {
+        if (!active || this.#transport.isExpired(publication.publication)) {
+          throw new Error('borrowed glyph layout has expired');
+        }
+      });
+      if (state.inspectionBorrowMode === 'sparse-first') state.inspectionBorrowMode = 'promotion-ready';
+      this.#adoptMeasuredBindings(state);
+    }
     const leaveBorrow = this.#handleState._enterBorrowedPlan();
     try {
       const result = read(glyphs);
@@ -909,7 +929,7 @@ class RenderPlannerImpl {
       for (const state of this.#texts) {
         const layout = layouts.get(state.paragraphId);
         if (layout === undefined) continue;
-        state.measurement = layout;
+        state.measurement = measurementFromLayoutInspection(layout);
         state.inspection = layout;
       }
       return;
@@ -942,7 +962,7 @@ class RenderPlannerImpl {
     const layout = readPlannerLayouts(publication).get(state.paragraphId);
     if (layout === undefined) throw new Error('text engine returned no layout inspection for retained text');
     this.#adoptMeasuredBindings(state);
-    state.measurement = layout;
+    state.measurement = measurementFromLayoutInspection(layout);
     state.inspection = layout;
     return layout;
   }
@@ -973,7 +993,7 @@ class RenderPlannerImpl {
       acknowledgedPublicationGeneration: this.#acknowledgedGeneration,
       semanticViewMask,
       limits: this.#limits,
-      paragraphMutations: this.#measurementParagraphMutations(),
+      paragraphMutations: this.#measurementParagraphMutations(state),
       paragraphOrderMutations: this.#measurementParagraphOrderMutations(),
       textMutations: textChanged
         ? [
@@ -1303,19 +1323,17 @@ class RenderPlannerImpl {
     );
   }
 
-  #measurementParagraphMutations(): PlannerParagraphMutation[] {
-    return [
-      ...[...this.#removed]
-        .filter((state) => state.published)
-        .map((state) => ({ opcode: 'remove' as const, paragraphId: state.paragraphId })),
-      ...[...this.#texts]
-        .filter((state) => !state.removed)
-        .map((state) => ({
-          opcode: 'upsert' as const,
-          paragraphId: state.paragraphId,
-          order: state.metrics.order,
-        })),
-    ];
+  #measurementParagraphMutations(state: RetainedTextState): PlannerParagraphMutation[] {
+    const mutations: PlannerParagraphMutation[] = [...this.#removed]
+      .filter((removed) => removed.published)
+      .map((removed) => ({ opcode: 'remove' as const, paragraphId: removed.paragraphId }));
+    if (!state.published) {
+      for (const candidate of this.#texts) {
+        if (candidate.removed) continue;
+        mutations.push({ opcode: 'upsert', paragraphId: candidate.paragraphId, order: candidate.metrics.order });
+      }
+    }
+    return mutations;
   }
 
   #measurementParagraphOrderMutations(): PlannerParagraphOrderMutation[] {

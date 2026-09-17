@@ -48,7 +48,7 @@ export interface TypeGpuText<Selection extends TypeGpuFontSelection = TypeGpuFon
   update(update: TypeGpuTextUpdate<Selection>): void;
   measure(): ParagraphLayoutSummary;
   glyphs(): GlyphLayoutInspection;
-  /** Reads indexed glyph data without copying full columns; the view expires when `read` returns. */
+  /** Reads indexed glyph data through a callback-scoped view; repeated unchanged reads may retain one private canonical snapshot. */
   withGlyphs<Result>(read: (glyphs: BorrowedGlyphLayout) => Result): Result;
   dispose(): void;
 }

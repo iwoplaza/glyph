@@ -77,7 +77,7 @@ function createLabels(count = 100) {
   );
   textGroup.add(...labels);
   scene.add(textGroup);
-  textGroup.updateMatrixWorld(true);
+  scene.updateMatrixWorld(true);
   if (textGroup.error !== undefined) throw textGroup.error;
   return { labels, root, scene, textGroup };
 }
@@ -86,6 +86,22 @@ function disposeLabels(created: ReturnType<typeof createLabels>): void {
   created.textGroup.dispose();
   for (const label of created.labels) label.dispose();
   created.root.dispose();
+}
+
+function borrowedGlyphChecksum(labels: ReturnType<typeof createLabels>['labels']): number {
+  return labels.reduce(
+    (total, label) =>
+      total +
+      label.withGlyphs((glyphs) => {
+        let checksum = glyphs.glyphCount;
+        for (let index = 0; index < glyphs.glyphCount; index += 1) {
+          const record = glyphs.glyphAt(index);
+          checksum += record.stableId + record.glyphId + record.x + record.y + record.advance;
+        }
+        return checksum;
+      }),
+    0,
+  );
 }
 
 function editedText(iteration: number): string {
@@ -175,15 +191,13 @@ group('retained batching @publication', () => {
     disposeLabels(created);
   });
 
-  bench('borrow glyphs from 100 unchanged retained labels @cached', function* () {
+  bench('borrow glyphs from 100 steadily promoted retained labels @cached', function* () {
     const created = createLabels();
-    const expectedGlyphs = created.labels.reduce(
-      (total, label) => total + label.withGlyphs((glyphs) => glyphs.glyphCount),
-      0,
-    );
-    const glyphCount = yield () =>
-      created.labels.reduce((total, label) => total + label.withGlyphs((glyphs) => glyphs.glyphCount), 0);
-    assert.equal(glyphCount, expectedGlyphs);
+    created.labels.forEach((label) => label.withGlyphs((glyphs) => glyphs.glyphCount));
+    const readGlyphs = () => borrowedGlyphChecksum(created.labels);
+    const expectedChecksum = readGlyphs();
+    const checksum = yield readGlyphs;
+    assert.equal(checksum, expectedChecksum);
     disposeLabels(created);
   });
 
@@ -230,6 +244,128 @@ group('retained batching @publication', () => {
     assert.equal(textCount, count);
     textGroup.dispose();
     for (const text of texts) text.dispose();
+    root.dispose();
+  });
+});
+
+group('retained batching at 1,000 labels @publication', () => {
+  bench('reorder 1000 unchanged retained labels @publication', function* () {
+    const created = createLabels(1_000);
+    for (const [index, label] of created.labels.entries()) label.renderOrder = index;
+    created.scene.updateMatrixWorld(true);
+    if (created.textGroup.error !== undefined) throw created.textGroup.error;
+    let reversed = false;
+    const textCount = yield () => {
+      reversed = !reversed;
+      for (const [index, label] of created.labels.entries()) {
+        label.renderOrder = reversed ? created.labels.length - index : index;
+      }
+      created.scene.updateMatrixWorld(true);
+      if (created.textGroup.error !== undefined) throw created.textGroup.error;
+      return created.textGroup.textCount;
+    };
+    assert.equal(textCount, created.labels.length);
+    disposeLabels(created);
+  });
+
+  bench('measure 1000 unchanged retained labels @cached', function* () {
+    const created = createLabels(1_000);
+    const expectedGlyphs = created.labels.reduce((total, label) => total + label.measure().glyphCount, 0);
+    const glyphCount = yield () => created.labels.reduce((total, label) => total + label.measure().glyphCount, 0);
+    assert.equal(glyphCount, expectedGlyphs);
+    disposeLabels(created);
+  });
+
+  bench('copy glyphs from 1000 unchanged retained labels @cached', function* () {
+    const created = createLabels(1_000);
+    const expectedGlyphs = created.labels.reduce((total, label) => total + label.glyphs().glyphCount, 0);
+    const glyphCount = yield () => created.labels.reduce((total, label) => total + label.glyphs().glyphCount, 0);
+    assert.equal(glyphCount, expectedGlyphs);
+    disposeLabels(created);
+  });
+
+  bench('first sparse borrow from 1000 retained labels @cached', function* () {
+    const created = createLabels(1_000);
+    const glyphCount = yield () =>
+      created.labels.reduce((total, label) => total + label.withGlyphs((glyphs) => glyphs.glyphCount), 0);
+    assert(glyphCount > 0, 'sparse borrows must contain glyphs');
+    disposeLabels(created);
+  });
+
+  bench('promote 1000 retained label borrows @cached', function* () {
+    const created = createLabels(1_000);
+    created.labels.forEach((label) => label.withGlyphs((glyphs) => glyphs.glyphCount));
+    const checksum = yield () => borrowedGlyphChecksum(created.labels);
+    assert(checksum > 0, 'promoted borrows must contain glyphs');
+    disposeLabels(created);
+  });
+
+  bench('borrow glyphs from 1000 steadily promoted retained labels @cached', function* () {
+    const created = createLabels(1_000);
+    created.labels.forEach((label) => label.withGlyphs((glyphs) => glyphs.glyphCount));
+    const expectedChecksum = borrowedGlyphChecksum(created.labels);
+    const checksum = yield () => borrowedGlyphChecksum(created.labels);
+    assert.equal(checksum, expectedChecksum);
+    disposeLabels(created);
+  });
+
+  bench('edit and measure one of 1000 retained labels @layout', function* () {
+    const created = createLabels(1_000);
+    const target = created.labels[0]!;
+    let alternate = false;
+    const glyphCount = yield () => {
+      alternate = !alternate;
+      target.text = alternate ? 'edited alpha' : 'edited bravo';
+      return target.measure().glyphCount;
+    };
+    assert(glyphCount > 0, 'measurement must contain glyphs');
+    disposeLabels(created);
+  });
+
+  bench('edit and sparsely borrow one of 1000 retained labels @layout', function* () {
+    const created = createLabels(1_000);
+    const target = created.labels[0]!;
+    target.withGlyphs((glyphs) => glyphs.glyphCount);
+    target.withGlyphs((glyphs) => glyphs.glyphCount);
+    let alternate = false;
+    const glyphId = yield () => {
+      alternate = !alternate;
+      target.text = alternate ? 'edited alpha' : 'edited bravo';
+      return target.withGlyphs((glyphs) => glyphs.glyphAt(0).glyphId);
+    };
+    assert(glyphId > 0, 'edited sparse borrow must contain glyphs');
+    disposeLabels(created);
+  });
+
+  bench('publish 1024 retained Text instances', function* () {
+    const count = 1_024;
+    const root = glyph.handle(
+      `labs:package:${String(nextHandle++)}`,
+      defineThreeConfig({ capacity: { size: count * 16, policy: 'grow' } }),
+    );
+    const textGroup = root.createTextGroup();
+    const texts = Array.from({ length: count }, (_, index) =>
+      root.createText({
+        font,
+        text: `alpha ${String(index).padStart(4, '0')}`,
+        style: { fontSize: 16 },
+        constraints: { width: { mode: 'exact', size: 160 } },
+      }),
+    );
+    textGroup.add(...texts);
+    textGroup.updateMatrixWorld(true);
+    let alternate = false;
+    const textCount = yield () => {
+      alternate = !alternate;
+      const prefix = alternate ? 'bravo' : 'alpha';
+      for (const [index, text] of texts.entries()) text.text = `${prefix} ${String(index).padStart(4, '0')}`;
+      textGroup.updateMatrixWorld(true);
+      if (textGroup.error !== undefined) throw textGroup.error;
+      return textGroup.textCount;
+    };
+    assert.equal(textCount, count);
+    textGroup.dispose();
+    texts.forEach((text) => text.dispose());
     root.dispose();
   });
 });

@@ -153,6 +153,272 @@ impl OrderedPlanCompiler {
         )
     }
 
+    /// Reorders one unchanged batch by copying committed records into their next physical order.
+    /// Primitive and draw metadata are reordered transactionally for future compiler passes, but
+    /// are not republished because every binding and aggregate renderer draw remains unchanged.
+    pub(crate) fn prepare_reorder(
+        &mut self,
+        codec: &ValidatedCodec,
+        capability_set: CapabilitySetId,
+        stable_ids: &[u32],
+        publication_generation: u32,
+    ) -> Result<bool, OrderedPlanError> {
+        if self.prepared {
+            return Err(OrderedPlanError::AlreadyPrepared);
+        }
+        if publication_generation == 0 {
+            return Err(OrderedPlanError::InvalidIdentity);
+        }
+        if self.codec_fingerprint != codec.fingerprint()
+            || self.capability_set != capability_set.0
+            || self.batches.len() != 1
+            || self.live_primitives.is_empty()
+            || self.live_draws.is_empty()
+            || self.instances.len() != stable_ids.len()
+        {
+            return Ok(false);
+        }
+        let batch = self.batches[0];
+        let batch_buffer_id = self
+            .buffers
+            .get(batch.buffer_start as usize)
+            .map_or(0, |buffer| buffer.id);
+        if batch.instance_start != 0
+            || usize::try_from(batch.instance_count).ok() != Some(stable_ids.len())
+            || self
+                .live_primitives
+                .iter()
+                .any(|primitive| primitive.buffer_id != batch_buffer_id)
+        {
+            return Ok(false);
+        }
+        let mut primitive_cursor = 0_u32;
+        for draw in &self.live_draws {
+            if draw.primitive_start != primitive_cursor
+                || draw.buffer_start != batch.buffer_start
+                || draw.buffer_count != u32::from(batch.buffer_count)
+            {
+                return Ok(false);
+            }
+            primitive_cursor = primitive_cursor
+                .checked_add(draw.primitive_count)
+                .ok_or(OrderedPlanError::ArithmeticOverflow)?;
+        }
+        if usize::try_from(primitive_cursor).ok() != Some(self.live_primitives.len()) {
+            return Ok(false);
+        }
+        codec
+            .capability_set(capability_set)
+            .ok_or(OrderedPlanError::CapabilitySetMissing)?;
+        let program = codec
+            .program(
+                capability_set,
+                batch.key.technique,
+                batch.key.program_variant,
+            )
+            .ok_or(OrderedPlanError::ProgramMissing)?;
+        if program.buffers.len() != usize::from(batch.buffer_count) {
+            return Ok(false);
+        }
+
+        self.reset_pending();
+        self.sort_pairs.clear();
+        reserve(&mut self.sort_pairs, self.instances.len())?;
+        for (slot, instance) in self.instances.iter().enumerate() {
+            self.sort_pairs.push((
+                u64::from(instance.stable_id),
+                u32::try_from(slot).map_err(|_| OrderedPlanError::ArithmeticOverflow)?,
+            ));
+        }
+        sort::sort_pairs(&mut self.sort_pairs);
+        if self
+            .sort_pairs
+            .windows(2)
+            .any(|pair| pair[0].0 == pair[1].0)
+        {
+            return Err(OrderedPlanError::DuplicateIdentity);
+        }
+
+        let buffers = self
+            .buffers
+            .get(range(batch.buffer_start, u32::from(batch.buffer_count))?)
+            .ok_or(OrderedPlanError::InvalidIdentity)?;
+        let mut pending = PendingBatch {
+            state: batch,
+            prior_index: Some(0),
+            capacity: buffers.first().map_or(0, |buffer| buffer.capacity),
+            buffer_ids: [0; MAX_PHYSICAL_BUFFERS],
+            buffer_generations: [0; MAX_PHYSICAL_BUFFERS],
+        };
+        for (buffer_index, buffer) in buffers.iter().enumerate() {
+            pending.buffer_ids[buffer_index] = buffer.id;
+            pending.buffer_generations[buffer_index] = buffer.generation;
+        }
+        self.pending_batches.push(pending);
+        reserve(&mut self.pending_instances, stable_ids.len())?;
+        reserve(&mut self.input_batches, stable_ids.len())?;
+        reserve(&mut self.input_slots, stable_ids.len())?;
+        reserve(&mut self.batch_cursors, stable_ids.len())?;
+        self.input_batches.resize(stable_ids.len(), NONE);
+        self.input_batches.fill(NONE);
+        self.input_slots.resize(stable_ids.len(), 0);
+
+        let mut reordered = false;
+        for (next_slot, &stable_id) in stable_ids.iter().enumerate() {
+            let found = self
+                .sort_pairs
+                .binary_search_by_key(&u64::from(stable_id), |pair| pair.0)
+                .map_err(|_| OrderedPlanError::InvalidIdentity)?;
+            let old_slot = self.sort_pairs[found].1;
+            let seen = self
+                .input_batches
+                .get_mut(old_slot as usize)
+                .ok_or(OrderedPlanError::InvalidIdentity)?;
+            if *seen != NONE {
+                return Err(OrderedPlanError::DuplicateIdentity);
+            }
+            *seen = 0;
+            reordered |= old_slot as usize != next_slot;
+            let mut instance = *self
+                .instances
+                .get(old_slot as usize)
+                .ok_or(OrderedPlanError::InvalidIdentity)?;
+            instance.input_index =
+                u32::try_from(next_slot).map_err(|_| OrderedPlanError::ArithmeticOverflow)?;
+            self.pending_instances.push(instance);
+            self.batch_cursors.push(old_slot);
+            self.input_slots[old_slot as usize] = instance.input_index;
+        }
+        if !reordered {
+            self.pending_instances.clear();
+            self.pending_batches.clear();
+            return Ok(false);
+        }
+        self.input_batches.fill(0);
+
+        self.sort_pairs.clear();
+        reserve(&mut self.sort_pairs, self.live_primitives.len())?;
+        for (old_primitive_index, primitive) in self.live_primitives.iter().enumerate() {
+            let old_start = usize::try_from(primitive.record_index)
+                .map_err(|_| OrderedPlanError::ArithmeticOverflow)?;
+            let count = usize::from(primitive.record_count);
+            let old_end = old_start
+                .checked_add(count)
+                .ok_or(OrderedPlanError::ArithmeticOverflow)?;
+            if old_end > self.input_slots.len() || count == 0 {
+                return Ok(false);
+            }
+            let mut next_start = u32::MAX;
+            let mut next_end = 0_u32;
+            for &next_slot in &self.input_slots[old_start..old_end] {
+                next_start = next_start.min(next_slot);
+                next_end = next_end.max(next_slot);
+            }
+            if next_end
+                .checked_sub(next_start)
+                .and_then(|span| span.checked_add(1))
+                != u32::try_from(count).ok()
+            {
+                return Ok(false);
+            }
+            self.sort_pairs.push((
+                u64::from(next_start),
+                u32::try_from(old_primitive_index)
+                    .map_err(|_| OrderedPlanError::ArithmeticOverflow)?,
+            ));
+        }
+        sort::sort_pairs(&mut self.sort_pairs);
+        reserve(&mut self.primitives, self.live_primitives.len())?;
+        for (next_primitive_index, &(next_start, old_primitive_index)) in
+            self.sort_pairs.iter().enumerate()
+        {
+            let mut pending = self.live_primitives[old_primitive_index as usize];
+            pending.record_index =
+                u32::try_from(next_start).map_err(|_| OrderedPlanError::ArithmeticOverflow)?;
+            pending.logical_order = pending.record_index;
+            self.primitives.push(pending);
+            self.input_batches[old_primitive_index as usize] = u32::try_from(next_primitive_index)
+                .map_err(|_| OrderedPlanError::ArithmeticOverflow)?;
+        }
+
+        reserve(&mut self.draws, self.live_draws.len())?;
+        for draw in &self.live_draws {
+            let old_start = usize::try_from(draw.primitive_start)
+                .map_err(|_| OrderedPlanError::ArithmeticOverflow)?;
+            let count = usize::try_from(draw.primitive_count)
+                .map_err(|_| OrderedPlanError::ArithmeticOverflow)?;
+            let old_end = old_start
+                .checked_add(count)
+                .ok_or(OrderedPlanError::ArithmeticOverflow)?;
+            if old_end > self.live_primitives.len() || count == 0 {
+                return Ok(false);
+            }
+            let mut next_start = u32::MAX;
+            let mut next_end = 0_u32;
+            for &next_primitive in &self.input_batches[old_start..old_end] {
+                next_start = next_start.min(next_primitive);
+                next_end = next_end.max(next_primitive);
+            }
+            if next_end
+                .checked_sub(next_start)
+                .and_then(|span| span.checked_add(1))
+                != u32::try_from(count).ok()
+            {
+                return Ok(false);
+            }
+            let mut pending = *draw;
+            pending.primitive_start = next_start;
+            pending.order_token = self.primitives[next_start as usize].logical_order;
+            self.draws.push(pending);
+        }
+        self.draws.sort_unstable_by_key(|draw| draw.primitive_start);
+
+        for (schema_index, schema) in program.buffers.iter().enumerate() {
+            let buffer = &buffers[schema_index];
+            let live_bytes = stable_ids
+                .len()
+                .checked_mul(schema.stride())
+                .ok_or(OrderedPlanError::ArithmeticOverflow)?;
+            let payload_start = self.payload.len();
+            reserve(&mut self.payload, live_bytes)?;
+            self.payload.resize(payload_start + live_bytes, 0);
+            for next_slot in 0..stable_ids.len() {
+                let old_slot = self.batch_cursors[next_slot] as usize;
+                let source = old_slot
+                    .checked_mul(schema.stride())
+                    .ok_or(OrderedPlanError::ArithmeticOverflow)?;
+                let destination = payload_start
+                    + next_slot
+                        .checked_mul(schema.stride())
+                        .ok_or(OrderedPlanError::ArithmeticOverflow)?;
+                let source = buffer
+                    .bytes
+                    .get(source..source + schema.stride())
+                    .ok_or(OrderedPlanError::InvalidIdentity)?;
+                let destination = self
+                    .payload
+                    .get_mut(destination..destination + schema.stride())
+                    .ok_or(OrderedPlanError::InvalidIdentity)?;
+                destination.copy_from_slice(source);
+            }
+            self.patches.push(PatchRecord {
+                opcode: PATCH_WRITE,
+                buffer_id: buffer.id,
+                buffer_generation: buffer.generation,
+                byte_length: u32::try_from(live_bytes)
+                    .map_err(|_| OrderedPlanError::ArithmeticOverflow)?,
+                payload_start: u32::try_from(payload_start)
+                    .map_err(|_| OrderedPlanError::ArithmeticOverflow)?,
+                ..PatchRecord::default()
+            });
+        }
+        self.pending_next_buffer_id = self.next_buffer_id;
+        self.pending_codec_fingerprint = self.codec_fingerprint;
+        self.pending_capability_set = self.capability_set;
+        self.prepared = true;
+        Ok(true)
+    }
+
     fn prepare_internal(
         &mut self,
         codec: &ValidatedCodec,
@@ -1930,6 +2196,119 @@ mod tests {
         assert_eq!(plan.primitives[1].record_index, u32::from(u16::MAX));
         assert_eq!(plan.draws.len(), 2);
         assert!(plan_layout(plan).is_ok());
+    }
+
+    #[test]
+    fn order_only_permutation_writes_overlap_safe_payload_without_republishing_bindings() {
+        let codec = codec();
+        let mut compiler = OrderedPlanCompiler::default();
+        let mut initial = [glyph(1, 1), glyph(2, 1), glyph(3, 1), glyph(4, 1)];
+        initial[2].semantic_id = 2;
+        initial[3].semantic_id = 2;
+        prepare(&mut compiler, &codec, &initial, &[1.0, 2.0, 3.0, 4.0], true);
+        compiler.commit().unwrap();
+        let buffer_id = compiler.buffers[0].id;
+        let mut first_primitive = compiler.live_primitives[0];
+        first_primitive.record_count = 2;
+        first_primitive.semantic_id = 1;
+        let mut second_primitive = first_primitive;
+        second_primitive.id = 3;
+        second_primitive.record_index = 2;
+        second_primitive.logical_order = 2;
+        second_primitive.semantic_id = 2;
+        compiler.live_primitives = vec![first_primitive, second_primitive];
+        let mut first_draw = compiler.live_draws[0];
+        first_draw.primitive_count = 1;
+        let mut second_draw = first_draw;
+        second_draw.id = 3;
+        second_draw.primitive_start = 1;
+        second_draw.order_token = 2;
+        compiler.live_draws = vec![first_draw, second_draw];
+        assert_eq!(compiler.live_primitives.len(), 2);
+        assert_eq!(compiler.live_draws.len(), 2);
+
+        assert!(
+            compiler
+                .prepare_reorder(&codec, CAPABILITY, &[3, 4, 1, 2], 2)
+                .unwrap()
+        );
+        let plan = compiler
+            .plan_view(7, CAPABILITY, codec.fingerprint())
+            .unwrap();
+        assert!(plan.resources.is_empty());
+        assert!(plan.buffers.is_empty());
+        assert!(plan.primitives.is_empty());
+        assert!(plan.draws.is_empty());
+        assert!(plan.retirements.is_empty());
+        assert_eq!(plan.patches.len(), 1);
+        assert_eq!(plan.patches[0].opcode, PATCH_WRITE);
+        assert_eq!(plan.patches[0].buffer_id, buffer_id);
+        assert_eq!(plan.patches[0].byte_length, 16);
+        assert_eq!(read_f32(plan.payload, 0), 3.0);
+        assert_eq!(read_f32(plan.payload, 4), 4.0);
+        assert_eq!(read_f32(plan.payload, 8), 1.0);
+        assert_eq!(read_f32(plan.payload, 12), 2.0);
+
+        compiler.abort();
+        assert_eq!(read_f32(compiler.buffer_bytes(buffer_id).unwrap(), 0), 1.0);
+        assert_eq!(read_f32(compiler.buffer_bytes(buffer_id).unwrap(), 4), 2.0);
+        assert_eq!(read_f32(compiler.buffer_bytes(buffer_id).unwrap(), 8), 3.0);
+        assert_eq!(read_f32(compiler.buffer_bytes(buffer_id).unwrap(), 12), 4.0);
+
+        assert!(
+            compiler
+                .prepare_reorder(&codec, CAPABILITY, &[3, 4, 1, 2], 2)
+                .unwrap()
+        );
+        compiler.commit().unwrap();
+        assert_eq!(read_f32(compiler.buffer_bytes(buffer_id).unwrap(), 0), 3.0);
+        assert_eq!(read_f32(compiler.buffer_bytes(buffer_id).unwrap(), 4), 4.0);
+        assert_eq!(read_f32(compiler.buffer_bytes(buffer_id).unwrap(), 8), 1.0);
+        assert_eq!(read_f32(compiler.buffer_bytes(buffer_id).unwrap(), 12), 2.0);
+        assert_eq!(compiler.live_primitives.len(), 2);
+        assert_eq!(compiler.live_primitives[0].semantic_id, 2);
+        assert_eq!(compiler.live_primitives[0].record_index, 0);
+        assert_eq!(compiler.live_primitives[1].semantic_id, 1);
+        assert_eq!(compiler.live_primitives[1].record_index, 2);
+        assert_eq!(compiler.live_draws.len(), 2);
+        assert_eq!(compiler.live_draws[0].id, 3);
+        assert_eq!(compiler.live_draws[0].primitive_start, 0);
+        assert_eq!(compiler.live_draws[1].id, 1);
+        assert_eq!(compiler.live_draws[1].primitive_start, 1);
+    }
+
+    #[test]
+    fn order_only_round_trip_preserves_an_aggregate_primitive_span() {
+        let codec = codec();
+        let mut compiler = OrderedPlanCompiler::default();
+        let initial = [glyph(1, 1), glyph(2, 1), glyph(3, 1), glyph(4, 1)];
+        prepare(&mut compiler, &codec, &initial, &[1.0, 2.0, 3.0, 4.0], true);
+        compiler.commit().unwrap();
+        assert_eq!(compiler.live_primitives.len(), 1);
+        assert_eq!(compiler.live_primitives[0].record_index, 0);
+        assert_eq!(compiler.live_primitives[0].record_count, 4);
+
+        assert!(
+            compiler
+                .prepare_reorder(&codec, CAPABILITY, &[3, 4, 1, 2], 2)
+                .unwrap()
+        );
+        compiler.commit().unwrap();
+        assert_eq!(compiler.live_primitives[0].record_index, 0);
+        assert_eq!(compiler.live_primitives[0].record_count, 4);
+
+        assert!(
+            compiler
+                .prepare_reorder(&codec, CAPABILITY, &[1, 2, 3, 4], 3)
+                .unwrap()
+        );
+        compiler.commit().unwrap();
+        assert_eq!(compiler.live_primitives[0].record_index, 0);
+        assert_eq!(compiler.live_primitives[0].record_count, 4);
+        assert_eq!(read_f32(compiler.buffer_bytes(1).unwrap(), 0), 1.0);
+        assert_eq!(read_f32(compiler.buffer_bytes(1).unwrap(), 4), 2.0);
+        assert_eq!(read_f32(compiler.buffer_bytes(1).unwrap(), 8), 3.0);
+        assert_eq!(read_f32(compiler.buffer_bytes(1).unwrap(), 12), 4.0);
     }
 
     #[test]

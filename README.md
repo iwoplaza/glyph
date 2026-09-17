@@ -160,8 +160,7 @@ import { bitmapFragment, bitmapVertexSnapped } from '@pmndrs/glyph/shaders/typeg
 
 ## Feature status
 
-Glyph is pre-release. These labels describe feature maturity, not a frozen public API.
-**✅ Stable** is the supported baseline, **🟡 Partial** has the gaps listed below, and **🧪 Experimental** is available but still being evaluated.
+Glyph is pre-release and its features may change with time. **✅ Stable** is the supported baseline, **🟡 Partial** has the gaps listed below, and **🧪 Experimental** is available but still being evaluated.
 
 | Feature | Status | Support and limitations |
 | --- | --- | --- |
@@ -186,21 +185,17 @@ Glyph is pre-release. These labels describe feature maturity, not a frozen publi
 | Direct TypeGPU rendering and shaders | 🧪 Experimental | Bitmap, MSDF, and Slug in caller-owned WebGPU render passes, plus standalone shader exports. |
 | TypeGPU shaders in Three.js | 🧪 Experimental | WebGPU and WebGL2 adapters. Full visual parity with the native TSL path is not yet established. |
 
-See the [package reference](.agents/docs/packages/glyph.md) for capability details and verification evidence.
-
 ## Roadmap
 
 Future work includes:
 
-- [ ] **Color emoji:** color glyph layers and bitmap resources.
-- [ ] **Micro JS shaping engine:** a small alternative for basic shaping.
-- [ ] **Glyph page cache:** on-demand raster pages, residency limits, and eviction for large CJK and icon fonts.
-- [ ] **Language-aware word breaks:** dictionary segmentation, locale-specific rules, and automatic hyphenation.
-- [ ] **Expanded editorial layout:** balanced columns and flow around rendered-pixel or depth-buffer occlusion.
-- [ ] **Vertical writing:** vertical CJK shaping and paragraph layout.
-- [ ] **Live per-glyph transforms:** deformation that continues to follow retained text updates.
-
-See the [detailed roadmap](.agents/docs/roadmap/roadmap.md) for implementation milestones and dependencies.
+- **Color emoji.** Color glyph layers and bitmap resources.
+- **Micro JS shaping engine.** A small alternative for basic shaping.
+- **Glyph page cache.** On-demand raster pages, residency limits, and eviction for large CJK and icon fonts.
+- **Language-aware word breaks.** Dictionary segmentation, locale-specific rules, and automatic hyphenation.
+- **Expanded editorial layout.** Balanced columns and flow around rendered-pixel or depth-buffer occlusion.
+- **Vertical writing.** Vertical CJK shaping and paragraph layout.
+- **Live per-glyph transforms.** Deformation that continues to follow retained text updates.
 
 ## Contribute
 

@@ -88,6 +88,22 @@ function disposeLabels(created: ReturnType<typeof createLabels>): void {
   created.root.dispose();
 }
 
+function borrowedGlyphChecksum(labels: ReturnType<typeof createLabels>['labels']): number {
+  return labels.reduce(
+    (total, label) =>
+      total +
+      label.withGlyphs((glyphs) => {
+        let checksum = glyphs.glyphCount;
+        for (let index = 0; index < glyphs.glyphCount; index += 1) {
+          const record = glyphs.glyphAt(index);
+          checksum += record.stableId + record.glyphId + record.x + record.y + record.advance;
+        }
+        return checksum;
+      }),
+    0,
+  );
+}
+
 function editedText(iteration: number): string {
   const leading = String.fromCharCode(65 + (iteration % 26));
   return `${leading}${paragraphText.slice(1)}`;
@@ -175,15 +191,13 @@ group('retained batching @publication', () => {
     disposeLabels(created);
   });
 
-  bench('borrow glyphs from 100 unchanged retained labels @cached', function* () {
+  bench('borrow glyphs from 100 promoted retained labels @cached', function* () {
     const created = createLabels();
-    const expectedGlyphs = created.labels.reduce(
-      (total, label) => total + label.withGlyphs((glyphs) => glyphs.glyphCount),
-      0,
-    );
-    const glyphCount = yield () =>
-      created.labels.reduce((total, label) => total + label.withGlyphs((glyphs) => glyphs.glyphCount), 0);
-    assert.equal(glyphCount, expectedGlyphs);
+    created.labels.forEach((label) => label.withGlyphs((glyphs) => glyphs.glyphCount));
+    const readGlyphs = () => borrowedGlyphChecksum(created.labels);
+    const expectedChecksum = readGlyphs();
+    const checksum = yield readGlyphs;
+    assert.equal(checksum, expectedChecksum);
     disposeLabels(created);
   });
 
@@ -230,6 +244,74 @@ group('retained batching @publication', () => {
     assert.equal(textCount, count);
     textGroup.dispose();
     for (const text of texts) text.dispose();
+    root.dispose();
+  });
+});
+
+group('retained batching at 1,000 labels @publication', () => {
+  bench('measure 1000 unchanged retained labels @cached', function* () {
+    const created = createLabels(1_000);
+    const expectedGlyphs = created.labels.reduce((total, label) => total + label.measure().glyphCount, 0);
+    const glyphCount = yield () => created.labels.reduce((total, label) => total + label.measure().glyphCount, 0);
+    assert.equal(glyphCount, expectedGlyphs);
+    disposeLabels(created);
+  });
+
+  bench('copy glyphs from 1000 unchanged retained labels @cached', function* () {
+    const created = createLabels(1_000);
+    const expectedGlyphs = created.labels.reduce((total, label) => total + label.glyphs().glyphCount, 0);
+    const glyphCount = yield () => created.labels.reduce((total, label) => total + label.glyphs().glyphCount, 0);
+    assert.equal(glyphCount, expectedGlyphs);
+    disposeLabels(created);
+  });
+
+  bench('borrow glyphs from 1000 promoted retained labels @cached', function* () {
+    const created = createLabels(1_000);
+    created.labels.forEach((label) => label.withGlyphs((glyphs) => glyphs.glyphCount));
+    const expectedChecksum = borrowedGlyphChecksum(created.labels);
+    const checksum = yield () => borrowedGlyphChecksum(created.labels);
+    assert.equal(checksum, expectedChecksum);
+    disposeLabels(created);
+  });
+
+  bench('edit and measure one of 1000 retained labels @layout', function* () {
+    const created = createLabels(1_000);
+    const target = created.labels[0]!;
+    let alternate = false;
+    const glyphCount = yield () => {
+      alternate = !alternate;
+      target.text = alternate ? 'edited alpha' : 'edited bravo';
+      return target.measure().glyphCount;
+    };
+    assert(glyphCount > 0, 'measurement must contain glyphs');
+    disposeLabels(created);
+  });
+
+  bench('publish 1024 retained Text instances', function* () {
+    const count = 1_024;
+    const root = glyph.handle(
+      `labs:package:${String(nextHandle++)}`,
+      defineThreeConfig({ capacity: { size: count * 16, policy: 'grow' } }),
+    );
+    const textGroup = root.createTextGroup();
+    const texts = Array.from({ length: count }, (_, index) =>
+      root.createText({
+        font,
+        text: `alpha ${String(index).padStart(4, '0')}`,
+        style: { fontSize: 16 },
+        constraints: { width: { mode: 'exact', size: 160 } },
+      }),
+    );
+    textGroup.add(...texts);
+    textGroup.updateMatrixWorld(true);
+    const textCount = yield () => {
+      textGroup.updateMatrixWorld(true);
+      if (textGroup.error !== undefined) throw textGroup.error;
+      return textGroup.textCount;
+    };
+    assert.equal(textCount, count);
+    textGroup.dispose();
+    texts.forEach((text) => text.dispose());
     root.dispose();
   });
 });

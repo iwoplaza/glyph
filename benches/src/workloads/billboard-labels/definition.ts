@@ -8,7 +8,7 @@ import {
 
 export const billboardLabelsDefinition = {
   controls: { ...noControls, animation: true, amount: labelDensityAmountControl },
-  defaults: workloadDefaults(14, 18),
+  defaults: workloadDefaults(14, 18, { workloadAmount: 100 }),
   description:
     'Orbits a camera around billboarded labels scattered in depth, resorting them front to back every frame.',
   fontPolicy: { kind: 'selectable', defaultFixture: 'inter' },

@@ -2,7 +2,7 @@ import * as THREE from 'three/webgpu';
 import { describe, expect, it } from 'vitest';
 
 import type { ComparisonWorkloadEntry } from '../shared/scene-entry';
-import { animateBillboardLabelEntries } from './scene';
+import { animateBillboardLabelEntries, billboardLabelCount } from './scene';
 
 function entry(x: number, z: number): ComparisonWorkloadEntry {
   const node = new THREE.Group();
@@ -13,6 +13,11 @@ function entry(x: number, z: number): ComparisonWorkloadEntry {
 }
 
 describe('billboard label animation', () => {
+  it('maps full density to the 1,000-label product target', () => {
+    expect(billboardLabelCount(0)).toBe(32);
+    expect(billboardLabelCount(100)).toBe(1_000);
+  });
+
   it('orbits the supplied camera and reorders labels as their depth crosses', () => {
     const entries = [entry(-100, 0), entry(100, 0)];
     const camera = new THREE.PerspectiveCamera();

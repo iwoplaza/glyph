@@ -49,7 +49,7 @@ import type {
 } from './handle-state.js';
 import { RenderPlanView, type RenderPlanTable } from './plan-view.js';
 import { readPlannerLayouts, readPlannerMeasurements } from './layout-query-view.js';
-import { createBorrowedGlyphLayout } from './borrowed-layout-view.js';
+import { createBorrowedGlyphLayout, createInspectionBorrowedGlyphLayout } from './borrowed-layout-view.js';
 import type { PortableResource } from '../config/resources.js';
 import { reuseOrCreateTextPropertySnapshot } from '../config/text-property.js';
 import type { ParagraphId, ResourceHandle } from './glyph-id.js';
@@ -358,6 +358,7 @@ interface RetainedTextState {
   committed: ResolvedTextOptions | undefined;
   measurement: ParagraphLayoutSummary | undefined;
   inspection: GlyphLayoutInspection | undefined;
+  inspectionBorrowPreferred: boolean;
 }
 
 interface CommittedFlowRegion {
@@ -579,6 +580,7 @@ class RenderPlannerImpl {
       committed: undefined,
       measurement: undefined,
       inspection: undefined,
+      inspectionBorrowPreferred: false,
     };
     try {
       this.#validateAggregateLimits(state);
@@ -707,19 +709,27 @@ class RenderPlannerImpl {
   _withGlyphs<Result>(state: RetainedTextState, read: (glyphs: BorrowedGlyphLayout) => Result): Result {
     this.#assertTextQueryable(state);
     if (typeof read !== 'function') throw new TypeError('borrowed glyph inspection callback must be a function');
-    const publication = this.#transport.borrowParagraphLayout(
-      this.#queryTextRequest(state, textShaperAbi.engine.semanticViewMasks.borrowedLayout),
-      state.paragraphId,
-      this.#limits.maxOutputBytes,
-    );
     let active = true;
-    const assertActive = (): void => {
-      if (!active || this.#transport.isExpired(publication.publication)) {
-        throw new Error('borrowed glyph layout has expired');
-      }
-    };
-    const glyphs = createBorrowedGlyphLayout(this.#transport, publication, assertActive);
-    this.#adoptMeasuredBindings(state);
+    let glyphs: BorrowedGlyphLayout;
+    const inspection = state.inspection ?? (state.inspectionBorrowPreferred ? this.#queryInspection(state) : undefined);
+    if (inspection !== undefined) {
+      glyphs = createInspectionBorrowedGlyphLayout(inspection, () => {
+        if (!active) throw new Error('borrowed glyph layout has expired');
+      });
+    } else {
+      const publication = this.#transport.borrowParagraphLayout(
+        this.#queryTextRequest(state, textShaperAbi.engine.semanticViewMasks.borrowedLayout),
+        state.paragraphId,
+        this.#limits.maxOutputBytes,
+      );
+      glyphs = createBorrowedGlyphLayout(this.#transport, publication, () => {
+        if (!active || this.#transport.isExpired(publication.publication)) {
+          throw new Error('borrowed glyph layout has expired');
+        }
+      });
+      state.inspectionBorrowPreferred = true;
+      this.#adoptMeasuredBindings(state);
+    }
     const leaveBorrow = this.#handleState._enterBorrowedPlan();
     try {
       const result = read(glyphs);

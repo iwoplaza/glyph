@@ -3070,30 +3070,18 @@ test('Text.withGlyphs demand-reads scalar records only inside one synchronous bo
   const font = await loadFont({ baked: { bytes: await readFile(fontUrl) } }, bitmap({ strikes: [16] }));
   const label = three.createText({ font, text: 'Borrowed glyph records wrap across two lines' });
   label.constraints = { width: { mode: 'exact', size: 140 } };
-  const owned = label.glyphs();
   instrumentedGlyph.reset();
   let escaped;
+  let glyphCount = 0;
+  const selected = [];
   const answer = Object.freeze({ answer: 42 });
   const returned = label.withGlyphs((layout) => {
     escaped = layout;
-    assert.equal(layout.glyphCount, owned.glyphCount);
-    for (const index of [0, owned.glyphCount - 1]) {
+    glyphCount = layout.glyphCount;
+    for (const index of [0, glyphCount - 1]) {
       const glyphRecord = layout.glyphAt(index);
-      assert.equal(glyphRecord.stableId, owned.glyphStableIds[index]);
-      assert.equal(glyphRecord.fontHandle, owned.fontHandles[owned.glyphFontSlots[index]]);
-      assert.equal(glyphRecord.glyphId, owned.glyphIds[index]);
-      assert.equal(glyphRecord.cluster, owned.clusters[index]);
-      assert.equal(glyphRecord.bidiLevel, owned.glyphBidiLevels[index]);
-      assert.equal(glyphRecord.fontSize, owned.glyphFontSizes[index]);
-      assert.equal(glyphRecord.x, owned.x[index]);
-      assert.equal(glyphRecord.y, owned.y[index]);
-      assert.equal(glyphRecord.advance, owned.glyphAdvances[index]);
-      assert.equal(glyphRecord.inkX, owned.glyphInkX[index]);
-      assert.equal(glyphRecord.inkY, owned.glyphInkY[index]);
-      assert.equal(glyphRecord.inkWidth, owned.glyphInkWidths[index]);
-      assert.equal(glyphRecord.inkHeight, owned.glyphInkHeights[index]);
-      assert.equal(glyphRecord.flags, owned.glyphFlags[index]);
       assert.equal(Object.isFrozen(glyphRecord), true);
+      selected.push([index, glyphRecord]);
     }
     assert.throws(() => label.set({ text: 'reentrant mutation' }), /cannot be reentered/);
     assert.throws(() => label.measure(), /cannot be reentered/);
@@ -3104,6 +3092,24 @@ test('Text.withGlyphs demand-reads scalar records only inside one synchronous bo
   assert.equal(returned, answer, 'the callback result retains its identity');
   assert.equal(instrumentedGlyph.latestSemanticRecordCount, 0, 'borrow setup serializes no semantic records');
   assert.equal(instrumentedGlyph.borrowedGlyphReads, 2, 'only explicitly selected glyphs cross the Wasm ABI');
+  const owned = label.glyphs();
+  assert.equal(glyphCount, owned.glyphCount);
+  for (const [index, glyphRecord] of selected) {
+    assert.equal(glyphRecord.stableId, owned.glyphStableIds[index]);
+    assert.equal(glyphRecord.fontHandle, owned.fontHandles[owned.glyphFontSlots[index]]);
+    assert.equal(glyphRecord.glyphId, owned.glyphIds[index]);
+    assert.equal(glyphRecord.cluster, owned.clusters[index]);
+    assert.equal(glyphRecord.bidiLevel, owned.glyphBidiLevels[index]);
+    assert.equal(glyphRecord.fontSize, owned.glyphFontSizes[index]);
+    assert.equal(glyphRecord.x, owned.x[index]);
+    assert.equal(glyphRecord.y, owned.y[index]);
+    assert.equal(glyphRecord.advance, owned.glyphAdvances[index]);
+    assert.equal(glyphRecord.inkX, owned.glyphInkX[index]);
+    assert.equal(glyphRecord.inkY, owned.glyphInkY[index]);
+    assert.equal(glyphRecord.inkWidth, owned.glyphInkWidths[index]);
+    assert.equal(glyphRecord.inkHeight, owned.glyphInkHeights[index]);
+    assert.equal(glyphRecord.flags, owned.glyphFlags[index]);
+  }
   assert.equal(label.text, 'Borrowed glyph records wrap across two lines');
   assert.throws(() => escaped.glyphCount, /expired/);
   assert.throws(() => escaped.glyphAt(0), /expired/);
@@ -3122,6 +3128,58 @@ test('Text.withGlyphs demand-reads scalar records only inside one synchronous bo
   label.text = 'mutation succeeds after borrow release';
   assert.equal(label.measure().glyphCount, 38);
 
+  label.dispose();
+  font.dispose();
+});
+
+test('Text.withGlyphs promotes repeated reads to a cached callback-scoped inspection', async (t) => {
+  const three = await createThreeTestHandle(t);
+  const font = await loadFont({ baked: { bytes: await readFile(fontUrl) } }, bitmap({ strikes: [16] }));
+  const scene = new THREE.Scene();
+  const group = three.createTextGroup();
+  const label = three.createText({ font, text: 'Committed glyph records' });
+  group.add(label);
+  scene.add(group);
+  scene.updateMatrixWorld(true);
+  glyph.shape();
+
+  instrumentedGlyph.reset();
+  const firstGlyphId = label.withGlyphs((layout) => layout.glyphAt(0).glyphId);
+  const secondGlyphId = label.withGlyphs((layout) => layout.glyphAt(0).glyphId);
+  assert.equal(firstGlyphId, secondGlyphId);
+  assert.equal(instrumentedGlyph.measureCrossings, 2, 'the second borrow promotes one canonical inspection');
+  assert.equal(instrumentedGlyph.borrowedGlyphReads, 1, 'the promoted borrow reads its scalar from cached columns');
+
+  instrumentedGlyph.reset();
+  assert.equal(
+    label.withGlyphs((layout) => layout.glyphAt(0).glyphId),
+    firstGlyphId,
+  );
+  assert.equal(instrumentedGlyph.measureCrossings, 0, 'unchanged promoted borrows stay inside JS');
+  assert.equal(instrumentedGlyph.borrowedGlyphReads, 0);
+
+  label.text = 'Dirty';
+  instrumentedGlyph.reset();
+  assert.equal(
+    label.withGlyphs((layout) => layout.glyphCount),
+    5,
+  );
+  assert.equal(instrumentedGlyph.measureCrossings, 1, 'a hot borrower refreshes once after a semantic edit');
+  assert.equal(
+    label.withGlyphs((layout) => layout.glyphCount),
+    5,
+  );
+  assert.equal(instrumentedGlyph.measureCrossings, 1, 'the refreshed inspection stays cached');
+
+  label.renderOrder = 7;
+  instrumentedGlyph.reset();
+  assert.equal(
+    label.withGlyphs((layout) => layout.glyphCount),
+    5,
+  );
+  assert.equal(instrumentedGlyph.measureCrossings, 0, 'order-only changes preserve positioned glyph columns');
+
+  group.dispose();
   label.dispose();
   font.dispose();
 });

@@ -204,12 +204,9 @@ See the [detailed roadmap](.agents/docs/roadmap/roadmap.md) for implementation m
 
 ## Contribute
 
-This repo uses [mise](https://mise.jdx.dev) to make it easier to install and configure the required toolchains.
-Install [Git LFS](https://git-lfs.com/) to download the fixtures and assets, which are stored outside ordinary Git history.
-Trust the checked-in configuration once per fresh clone before asking mise to install them:
+Install [mise](https://mise.jdx.dev) for the required tools and [Git LFS](https://git-lfs.com/) for fixtures and assets. Then run:
 
 ```sh
-# brew install mise
 git lfs install
 git lfs pull
 mise trust
@@ -228,7 +225,6 @@ The benchmark application lives in [`benches/`](benches/). `pnpm dev` opens its 
 `pnpm scripts list` lists automated benchmarks and fixture generation commands. CI checks out LFS objects before
 building or testing. Asset paths remain ordinary local files after `git lfs pull`.
 
-Mise is optional. With matching Node, pnpm, and Rust tools already on `PATH`, use `pnpm install` and `pnpm dev`
-directly. Repository checks and commit-time documentation digest maintenance use the same pinned Node.js runtime.
+If you already have the pinned Node, pnpm, and Rust versions installed, you can run pnpm commands without `mise exec --`.
 
 `@pmndrs/glyph` is ESM-only and MIT licensed.

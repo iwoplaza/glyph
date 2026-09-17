@@ -2431,6 +2431,19 @@ test('one Three root realizes two public Text objects as one indexed Rust draw',
   const initialRightMeasurement = right.measure();
   assert.ok(initialLeftMeasurement);
   assert.ok(initialRightMeasurement);
+
+  const pendingSibling = three.createText({ font, text: 'EF' });
+  group.add(pendingSibling);
+  instrumented.reset();
+  assert.equal(
+    left.measure(),
+    initialLeftMeasurement,
+    'a cached paragraph measurement must not reconcile unrelated pending siblings',
+  );
+  assert.equal(instrumented.crossings, 0, 'a cached paragraph measurement must remain local to its retained entry');
+  group.remove(pendingSibling);
+  pendingSibling.dispose();
+
   instrumented.reset();
   left.set({});
   assert.equal(left.measure(), initialLeftMeasurement, 'an empty update must preserve the cached measurement');

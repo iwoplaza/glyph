@@ -1373,10 +1373,7 @@ class ThreeRootPublication {
 
   #measureText(text: Text<RasterFormatMetadata>, positionGlyphs: boolean): ParagraphLayoutSummary {
     this.#assertActive();
-    const texts = this.#root.queryMembers(text);
-    if (this.#needsActiveReconcile(texts)) this.#reconcileQuery(texts, text);
-    const entry = this.#entries.get(text);
-    if (entry === undefined) throw new Error('Text is not retained by this batch');
+    const entry = this.#queryEntry(text);
     const measurement = positionGlyphs ? entry.handle.measureInk() : entry.handle.measure();
     this.#detachedQuery = nearestScene(text) === undefined ? text : undefined;
     reconciler.publishMeasurement(text, measurement);
@@ -1385,10 +1382,7 @@ class ThreeRootPublication {
 
   inspection(text: Text<RasterFormatMetadata>): GlyphLayoutInspection {
     this.#assertActive();
-    const texts = this.#root.queryMembers(text);
-    if (this.#needsActiveReconcile(texts)) this.#reconcileQuery(texts, text);
-    const entry = this.#entries.get(text);
-    if (entry === undefined) throw new Error('Text is not retained by this batch');
+    const entry = this.#queryEntry(text);
     const inspection = entry.handle.inspect();
     this.#detachedQuery = nearestScene(text) === undefined ? text : undefined;
     reconciler.publishMeasurement(text, inspection);
@@ -1397,13 +1391,27 @@ class ThreeRootPublication {
 
   withGlyphs<Result>(text: Text<RasterFormatMetadata>, read: (glyphs: BorrowedGlyphLayout) => Result): Result {
     this.#assertActive();
+    const entry = this.#queryEntry(text);
+    const result = entry.handle.withGlyphs(read);
+    this.#detachedQuery = nearestScene(text) === undefined ? text : undefined;
+    return result;
+  }
+
+  #queryEntry(text: Text<RasterFormatMetadata>): BoundTextEntry {
+    const current = this.#entries.get(text);
+    if (
+      current !== undefined &&
+      current.committedRevision >= 0 &&
+      current.stagedRevision === reconciler.desiredRevision(text) &&
+      nearestScene(text) !== undefined
+    ) {
+      return current;
+    }
     const texts = this.#root.queryMembers(text);
     if (this.#needsActiveReconcile(texts)) this.#reconcileQuery(texts, text);
     const entry = this.#entries.get(text);
     if (entry === undefined) throw new Error('Text is not retained by this batch');
-    const result = entry.handle.withGlyphs(read);
-    this.#detachedQuery = nearestScene(text) === undefined ? text : undefined;
-    return result;
+    return entry;
   }
 
   #reconcileQuery(texts: readonly Text<RasterFormatMetadata>[], text: Text<RasterFormatMetadata>): void {

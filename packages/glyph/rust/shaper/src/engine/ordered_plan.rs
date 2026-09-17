@@ -233,6 +233,9 @@ impl OrderedPlanCompiler {
             ));
         }
         sort::sort_pairs(&mut self.sort_pairs);
+        // Duplicate committed identities mean the retained compiler state is corrupt. Requested
+        // identities below may legitimately stop matching after raster admission changes, so
+        // those fall back to ordinary compilation instead of becoming an engine error.
         if self
             .sort_pairs
             .windows(2)
@@ -2186,6 +2189,36 @@ mod tests {
     }
 
     #[test]
+    fn order_only_permutation_falls_back_for_changed_or_duplicate_requested_identities() {
+        let codec = codec();
+        let mut compiler = OrderedPlanCompiler::default();
+        let initial = [glyph(1, 1), glyph(2, 1), glyph(3, 1), glyph(4, 1)];
+        prepare(&mut compiler, &codec, &initial, &[1.0, 2.0, 3.0, 4.0], true);
+        compiler.commit().unwrap();
+
+        assert!(
+            !compiler
+                .prepare_reorder(&codec, CAPABILITY, &[3, 4, 1, 5], 2)
+                .unwrap()
+        );
+        assert!(
+            !compiler
+                .prepare_reorder(&codec, CAPABILITY, &[3, 3, 1, 2], 2)
+                .unwrap()
+        );
+
+        prepare(
+            &mut compiler,
+            &codec,
+            &initial,
+            &[1.0, 2.0, 3.0, 4.0],
+            false,
+        );
+        assert_eq!(compiler.retained_topology_preparations, 1);
+        compiler.commit().unwrap();
+    }
+
+    #[test]
     fn order_only_round_trip_preserves_an_aggregate_primitive_span() {
         let codec = codec();
         let mut compiler = OrderedPlanCompiler::default();
@@ -2195,6 +2228,17 @@ mod tests {
         assert_eq!(compiler.live_primitives.len(), 1);
         assert_eq!(compiler.live_primitives[0].record_index, 0);
         assert_eq!(compiler.live_primitives[0].record_count, 4);
+
+        assert!(
+            compiler
+                .prepare_reorder(&codec, CAPABILITY, &[3, 4, 1, 2], 2)
+                .unwrap()
+        );
+        compiler.abort();
+        assert_eq!(read_f32(compiler.buffer_bytes(1).unwrap(), 0), 1.0);
+        assert_eq!(read_f32(compiler.buffer_bytes(1).unwrap(), 4), 2.0);
+        assert_eq!(read_f32(compiler.buffer_bytes(1).unwrap(), 8), 3.0);
+        assert_eq!(read_f32(compiler.buffer_bytes(1).unwrap(), 12), 4.0);
 
         assert!(
             compiler

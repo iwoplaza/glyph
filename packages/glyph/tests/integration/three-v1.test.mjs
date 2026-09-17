@@ -441,6 +441,18 @@ test('rank-only updates republish bindings when one storage batch has multiple m
 
   try {
     assert.equal(rootDraws(scene).length, 2);
+    const materialTransforms = () =>
+      Object.fromEntries(
+        rootDraws(scene).map((draw) => {
+          const attribute = draw.geometry.getAttribute(glyphAttribute(threeSystemBuffers.transformIndex.id));
+          const start = draw.userData.pmndrsGlyphRunStart;
+          return [
+            draw.material.name,
+            Array.from({ length: draw.geometry.instanceCount }, (_, index) => attribute.getX(start + index)),
+          ];
+        }),
+      );
+    const authoredTransforms = materialTransforms();
     first.renderOrder = 1;
     second.renderOrder = 0;
     instrumentedGlyph.reset();
@@ -448,7 +460,7 @@ test('rank-only updates republish bindings when one storage batch has multiple m
     const counts = instrumentedGlyph.latestPlanCounts();
     assert.ok(counts.draws > 0, 'multiple material draws must be republished after physical reordering');
     assert.ok(counts.primitives > 0, 'multiple material spans must be republished with their draws');
-    assert.deepEqual(new Set(rootDraws(scene).map((draw) => draw.material.name)), new Set(['first', 'second']));
+    assert.deepEqual(materialTransforms(), authoredTransforms, 'each material keeps its authored transform span');
   } finally {
     first.dispose();
     second.dispose();

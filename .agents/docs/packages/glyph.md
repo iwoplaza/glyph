@@ -5,7 +5,7 @@ description: Implements portable font loading, retained Rust shaping and layout,
 resource: ../../../packages/glyph
 workspace_package: '@pmndrs/glyph'
 documentation_type: reference
-source_digest: 'sha256:14b17031026aa1b9ee3fbdc7876bee11b1162b2dff7de76693185859f6086a51'
+source_digest: 'sha256:b1cb76981651a684ff92793e43150af3304b3066c4cfaad9c1f9fcf7625d41bb'
 tags: [package, public-api, rust, wasm, threejs, typography]
 sources:
   - id: manifest
@@ -572,8 +572,8 @@ and omit the sideband when scope and rank are unchanged. An ungrouped
 `Text.renderOrder` retains ordinary Three draw-mesh meaning. Paragraph rank is deliberately absent from glyph storage and
 draw keys: compatible spans and grouped paragraphs therefore coalesce by resource, material, and fixed paint layer, with
 under-decoration, glyph, and over-decoration layers preserving CSS paint order.
-When a rank-only permutation keeps the committed Codec, capability, one-batch storage topology, and renderable stable-ID
-set, Rust copies the committed physical records into their new order and publishes write patches only. It transactionally
+When a rank-only permutation keeps the committed Codec, capability, one-batch single-aggregate-draw storage topology,
+and renderable stable-ID set, Rust copies the committed physical records into their new order and publishes write patches only. It transactionally
 updates its internal aggregate primitive/draw spans but does not republish unchanged buffers, resources, primitives,
 draws, or retirements. Recordless source glyphs remain in retained semantic state but are excluded from the renderable-ID
 permutation exactly as they are from Codec output. Any incompatible topology falls back to ordinary retained compilation.

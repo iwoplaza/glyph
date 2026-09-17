@@ -199,7 +199,7 @@ Future work includes:
 
 ## Contribute
 
-Install [mise](https://mise.jdx.dev) for the required tools and [Git LFS](https://git-lfs.com/) for fixtures and assets. Then run:
+Install [Git LFS](https://git-lfs.com/) for fixtures and assets. [Mise](https://mise.jdx.dev) is optional and installs the required tool versions for you. To set up with mise:
 
 ```sh
 git lfs install

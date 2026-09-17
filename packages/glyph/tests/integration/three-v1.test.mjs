@@ -3020,7 +3020,7 @@ test('Text.measure answers attached first-frame state without traversing matrice
   fontDomain.dispose();
 });
 
-test('Text.measure retains lifecycle context but serializes only pending paragraph ranks', async (t) => {
+test('Text.measure retains unpublished lifecycle but skips published paragraph upserts', async (t) => {
   const three = await createThreeTestHandle(t);
   const font = await loadFont({ baked: { bytes: await readFile(fontUrl) } }, bitmap({ strikes: [16] }));
   const scene = new THREE.Scene();
@@ -3035,7 +3035,7 @@ test('Text.measure retains lifecycle context but serializes only pending paragra
   instrumentedGlyph.reset();
   assert.ok(first.measure().glyphCount > 0);
   const semanticQueryCounts = instrumentedGlyph.latestMeasurementRequestCounts();
-  assert.equal(semanticQueryCounts.paragraph, 2, 'a semantic query retains the complete paragraph lifecycle');
+  assert.equal(semanticQueryCounts.paragraph, 0, 'a published target needs no repeated paragraph lifecycle rows');
   assert.equal(semanticQueryCounts.paragraphOrder, 0, 'a semantic query does not resend stable rank rows');
 
   first.renderOrder = 2;

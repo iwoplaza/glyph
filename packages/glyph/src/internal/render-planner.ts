@@ -973,7 +973,7 @@ class RenderPlannerImpl {
       acknowledgedPublicationGeneration: this.#acknowledgedGeneration,
       semanticViewMask,
       limits: this.#limits,
-      paragraphMutations: this.#measurementParagraphMutations(),
+      paragraphMutations: this.#measurementParagraphMutations(state),
       paragraphOrderMutations: this.#measurementParagraphOrderMutations(),
       textMutations: textChanged
         ? [
@@ -1303,19 +1303,17 @@ class RenderPlannerImpl {
     );
   }
 
-  #measurementParagraphMutations(): PlannerParagraphMutation[] {
-    return [
-      ...[...this.#removed]
-        .filter((state) => state.published)
-        .map((state) => ({ opcode: 'remove' as const, paragraphId: state.paragraphId })),
-      ...[...this.#texts]
-        .filter((state) => !state.removed)
-        .map((state) => ({
-          opcode: 'upsert' as const,
-          paragraphId: state.paragraphId,
-          order: state.metrics.order,
-        })),
-    ];
+  #measurementParagraphMutations(state: RetainedTextState): PlannerParagraphMutation[] {
+    const mutations: PlannerParagraphMutation[] = [...this.#removed]
+      .filter((removed) => removed.published)
+      .map((removed) => ({ opcode: 'remove' as const, paragraphId: removed.paragraphId }));
+    if (!state.published) {
+      for (const candidate of this.#texts) {
+        if (candidate.removed) continue;
+        mutations.push({ opcode: 'upsert', paragraphId: candidate.paragraphId, order: candidate.metrics.order });
+      }
+    }
+    return mutations;
   }
 
   #measurementParagraphOrderMutations(): PlannerParagraphOrderMutation[] {

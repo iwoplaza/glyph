@@ -192,13 +192,13 @@ See the [package reference](.agents/docs/packages/glyph.md) for capability detai
 
 Future work includes:
 
-- **Color emoji:** color glyph layers and bitmap resources.
-- **Micro JS shaping engine:** a small alternative for basic shaping.
-- **Glyph page cache:** on-demand raster pages, residency limits, and eviction for large CJK and icon fonts.
-- **Language-aware word breaks:** dictionary segmentation, locale-specific rules, and automatic hyphenation.
-- **Expanded editorial layout:** balanced columns and flow around rendered-pixel or depth-buffer occlusion.
-- **Vertical writing:** vertical CJK shaping and paragraph layout.
-- **Live per-glyph transforms:** deformation that continues to follow retained text updates.
+- [ ] **Color emoji:** color glyph layers and bitmap resources.
+- [ ] **Micro JS shaping engine:** a small alternative for basic shaping.
+- [ ] **Glyph page cache:** on-demand raster pages, residency limits, and eviction for large CJK and icon fonts.
+- [ ] **Language-aware word breaks:** dictionary segmentation, locale-specific rules, and automatic hyphenation.
+- [ ] **Expanded editorial layout:** balanced columns and flow around rendered-pixel or depth-buffer occlusion.
+- [ ] **Vertical writing:** vertical CJK shaping and paragraph layout.
+- [ ] **Live per-glyph transforms:** deformation that continues to follow retained text updates.
 
 See the [detailed roadmap](.agents/docs/roadmap/roadmap.md) for implementation milestones and dependencies.
 

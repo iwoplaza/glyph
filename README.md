@@ -2,6 +2,10 @@
 
 Portable font baking, Unicode shaping, paragraph layout, and batched text rendering for every Canvas.
 
+```sh
+pnpm add @pmndrs/glyph three
+```
+
 ```ts
 import { glyph, msdf } from '@pmndrs/glyph';
 import { ThreeConfig } from '@pmndrs/glyph/three';

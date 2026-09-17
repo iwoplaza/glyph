@@ -119,7 +119,8 @@ jobs:
         run: |
           cp benches/src/benchmark/package-size-summary.ts "$RUNNER_TEMP/package-size-summary.ts"
           cp benches/src/benchmark/production-app-size.ts "$RUNNER_TEMP/production-app-size.ts"
-          cp benches/src/benchmark/react-adapter-size.ts "$RUNNER_TEMP/react-adapter-size.ts"
+          cp benches/src/benchmark/framework-adapter-size.ts "$RUNNER_TEMP/framework-adapter-size.ts"
+          cp benches/src/benchmark/vite-size-bundle.ts "$RUNNER_TEMP/vite-size-bundle.ts"
           cp benches/size-entries/react-runtime.ts "$RUNNER_TEMP/react-runtime.ts"
           cp benches/src/benchmark/size-limit-report.mts "$RUNNER_TEMP/size-limit-report.mts"
           cp benches/src/benchmark/package-size-comment.mts "$RUNNER_TEMP/package-size-comment.mts"

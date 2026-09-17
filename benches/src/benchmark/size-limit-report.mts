@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 import { sizeLimitRows } from './package-size-summary.ts';
 import { measureR3fHelloWorldProductionBundle } from './production-app-size.ts';
-import { measurePeerExternalizedReactAdapter } from './react-adapter-size.ts';
+import { measurePeerExternalizedReactAdapter } from './framework-adapter-size.ts';
 
 let input = '';
 for await (const chunk of process.stdin) input += String(chunk);
@@ -21,7 +21,9 @@ if (!report.entries?.some((entry) => isNonArrayObject(entry) && entry.id === 'r3
   if (!Array.isArray(report.entries)) throw new Error('package-size report requires entries');
   report.entries.push(await measureR3fHelloWorldProductionBundle());
 }
-const rows = sizeLimitRows(report);
+// A newly introduced surface has no counterpart on the PR base. Keep the existing
+// measurements and let the comparison report the new row instead of fabricating zero-byte evidence.
+const rows = sizeLimitRows(report, { allowMissing: true });
 const trace = process.env.SIZE_REPORT_TRACE_PATH;
 if (trace !== undefined) await appendFile(trace, `${JSON.stringify(rows)}\n`);
 process.stdout.write(JSON.stringify(rows));

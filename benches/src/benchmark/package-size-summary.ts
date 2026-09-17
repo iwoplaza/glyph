@@ -19,7 +19,9 @@ const summaryDefinitions = [
   { id: 'text-shaper-wasm', label: 'Shaper Wasm' },
   { id: 'three-runtime-js', label: 'Three.js adapter JS' },
   { id: 'react-runtime-js', label: 'React adapter JS' },
+  { id: 'vue-runtime-js', label: 'Vue adapter JS' },
   { id: 'r3f-hello-world-production-js', label: 'R3F hello-world app JS' },
+  { id: 'tres-playground-production-js', label: 'Tres playground app JS' },
   { id: 'font-inter-bitmap-16-32', label: 'Inter font · Bitmap' },
   { id: 'font-inter-mtsdf', label: 'Inter font · MTSDF' },
   { id: 'font-inter-slug', label: 'Inter font · Slug' },
@@ -45,13 +47,14 @@ const compactColumns = {
     'text-shaper-wasm',
     'three-runtime-js',
     'react-runtime-js',
+    'vue-runtime-js',
     'r3f-hello-world-production-js',
+    'tres-playground-production-js',
     'font-validator-js',
     'runtime-baker-host-js',
     'runtime-baker-worker-js',
     'portable-baker-js',
-    'bitmap-baker-js',
-    'mtsdf-baker-js',
+    'portable-baker-wasm',
   ],
   right: [
     'font-inter-bitmap-16-32',
@@ -60,15 +63,19 @@ const compactColumns = {
     'font-icons-bitmap-16-32',
     'font-icons-mtsdf',
     'font-icons-slug',
-    'portable-baker-wasm',
+    'bitmap-baker-js',
     'bitmap-baker-wasm',
+    'mtsdf-baker-js',
     'mtsdf-baker-wasm',
     'slug-baker-js',
     'slug-baker-wasm',
   ],
 } as const satisfies Record<'left' | 'right', readonly (typeof summaryDefinitions)[number]['id'][]>;
 
-export function summarizePackageSizes(report: unknown): readonly PackageSizeSummaryEntry[] {
+export function summarizePackageSizes(
+  report: unknown,
+  options: { readonly allowMissing?: boolean } = {},
+): readonly PackageSizeSummaryEntry[] {
   if (!isNonArrayObject(report) || !Array.isArray(report.entries)) {
     throw new Error('package-size summary requires a report with entries');
   }
@@ -77,7 +84,7 @@ export function summarizePackageSizes(report: unknown): readonly PackageSizeSumm
     if (!isNonArrayObject(entry) || typeof entry.id !== 'string') continue;
     entries.set(entry.id, { status: entry.status, gzipBytes: entry.gzipBytes });
   }
-  return summaryDefinitions.map(({ id, label }) => {
+  return summaryDefinitions.flatMap(({ id, label }) => {
     const entry = entries.get(id);
     if (
       entry?.status !== 'measured' ||
@@ -85,14 +92,18 @@ export function summarizePackageSizes(report: unknown): readonly PackageSizeSumm
       !Number.isSafeInteger(entry.gzipBytes) ||
       entry.gzipBytes <= 0
     ) {
+      if (options.allowMissing === true && entry === undefined) return [];
       throw new Error(`package-size summary requires a positive measured gzip size for ${id}`);
     }
-    return { id, label, gzipBytes: entry.gzipBytes };
+    return [{ id, label, gzipBytes: entry.gzipBytes }];
   });
 }
 
-export function sizeLimitRows(report: unknown): readonly SizeLimitRow[] {
-  return summarizePackageSizes(report).map(({ label, gzipBytes }) => ({
+export function sizeLimitRows(
+  report: unknown,
+  options: { readonly allowMissing?: boolean } = {},
+): readonly SizeLimitRow[] {
+  return summarizePackageSizes(report, options).map(({ label, gzipBytes }) => ({
     name: `${label} (gzip)`,
     size: gzipBytes,
   }));

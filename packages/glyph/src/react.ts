@@ -35,7 +35,14 @@ import { glyph } from './glyph.js';
 import { GlyphFontError } from './loader.js';
 import { type FontSelection, type FontStack } from './loaded-font.js';
 import { mergePropertyList } from './property-list.js';
-import { reactFontResourceKey } from './internal/react-font-resource-key.js';
+import {
+  applyTextGroupOptions,
+  desiredTextUpdate,
+  sameDesiredText,
+  snapshotProperty,
+  snapshotPropertyList,
+} from './internal/desired-text.js';
+import { fontResourceKey } from './internal/font-resource-key.js';
 import {
   type Constraints,
   type ParagraphLayout,
@@ -449,11 +456,11 @@ function sameProviderFontFaceDeclaration(left: GlyphProviderFontFace, right: Gly
   if (left === right) return true;
   if (isFontFaceSelection(left) || isFontFaceSelection(right)) return false;
   const leftKey = isProviderFontFaceConfig(left)
-    ? reactFontResourceKey(left.src, left.format)
-    : reactFontResourceKey(left, undefined);
+    ? fontResourceKey(left.src, left.format)
+    : fontResourceKey(left, undefined);
   const rightKey = isProviderFontFaceConfig(right)
-    ? reactFontResourceKey(right.src, right.format)
-    : reactFontResourceKey(right, undefined);
+    ? fontResourceKey(right.src, right.format)
+    : fontResourceKey(right, undefined);
   return leftKey === rightKey;
 }
 
@@ -679,11 +686,9 @@ function TextObject({
 
   useLayoutEffect(() => {
     if (object === undefined) return;
-    const { pixelSnapping: _pixelSnapping, ...update } = desired;
-    if (!sameDesiredText(appliedRef.current, desired)) {
-      object.set(update);
-      appliedRef.current = desired;
-    }
+    if (sameDesiredText(appliedRef.current, desired)) return;
+    object.set(desiredTextUpdate(desired));
+    appliedRef.current = desired;
     invalidate();
   }, [desired, invalidate, object]);
 
@@ -734,12 +739,23 @@ function TextGroupObject({
     },
     threeRootHost(root),
   ]);
+  const [store] = useState(() => createObjectStore<ThreeTextGroup>());
+  const object = useSyncExternalStore(store.subscribe, store.getSnapshot, store.getSnapshot);
+  const invalidate = useThree((state) => state.invalidate);
   const publishObject = useMemo(
     () => (value: ThreeTextGroup | null) => {
+      store.publish(value ?? undefined);
       publishCommittedObject(value);
     },
-    [publishCommittedObject],
+    [publishCommittedObject, store],
   );
+  const { material, renderOrder } = options;
+
+  // Group presentation is complete desired state owned here, not by r3f prop diffing, so a removed prop resets.
+  useLayoutEffect(() => {
+    if (object === undefined) return;
+    if (applyTextGroupOptions(object, { material, renderOrder })) invalidate();
+  }, [invalidate, material, object, renderOrder]);
 
   return createElement<ThreeElement<typeof ThreeTextGroup>>(
     'pmndrsGlyphTextGroup',
@@ -793,7 +809,7 @@ function useFontHook(input: FontFaceSource, config: DefaultHookFontConfig = {}):
 function preloadFont(input: FontFaceSource): Promise<void>;
 function preloadFont<const Format>(input: FontFaceSource, config: SelectedHookFontConfig<Format>): Promise<void>;
 function preloadFont(input: FontFaceSource, config: DefaultHookFontConfig = {}): Promise<void> {
-  const key = reactFontResourceKey(input, config.format);
+  const key = fontResourceKey(input, config.format);
   const existing = defaultFontPreloads.get(key);
   if (existing !== undefined) return existing.promise;
   const preload: DefaultFontPreload = { promise: Promise.resolve(), resource: undefined };
@@ -819,7 +835,7 @@ function preloadFont(input: FontFaceSource, config: DefaultHookFontConfig = {}):
 function clearFont(input: FontFaceSource): void;
 function clearFont<const Format>(input: FontFaceSource, config: SelectedHookFontConfig<Format>): void;
 function clearFont(input: FontFaceSource, config: DefaultHookFontConfig = {}): void {
-  const key = reactFontResourceKey(input, config.format);
+  const key = fontResourceKey(input, config.format);
   const preload = defaultFontPreloads.get(key);
   defaultFontPreloads.delete(key);
   preload?.resource?.clear();
@@ -847,7 +863,7 @@ function reactFontFaceResource(
     cache = new Map();
     reactFontFaces.set(handle, cache);
   }
-  const key = reactFontResourceKey(input, config.format);
+  const key = fontResourceKey(input, config.format);
   const existing = cache.get(key);
   if (existing !== undefined && (!existing.face.disposed || existing.status === 'rejected')) return existing;
   const face = hookFontFace(input, config);
@@ -1178,10 +1194,10 @@ function textProperties<Technique extends RasterFormatMetadata>(
       text: flattened.text,
       spans: flattened.spans,
     }) as FormattedText<Technique>,
-    ...(properties.style === undefined ? {} : { style: properties.style }),
-    ...(properties.layout === undefined ? {} : { layout: properties.layout }),
-    ...(properties.constraints === undefined ? {} : { constraints: properties.constraints }),
-    ...(properties.flow === undefined ? {} : { flow: properties.flow }),
+    style: snapshotPropertyList(properties.style, 'Text style'),
+    layout: snapshotPropertyList(properties.layout, 'Text layout'),
+    constraints: snapshotPropertyList(properties.constraints, 'Text constraints'),
+    ...(properties.flow === undefined ? {} : { flow: snapshotProperty(properties.flow) }),
     ...(properties.rasterPixelRatio === undefined ? {} : { rasterPixelRatio: properties.rasterPixelRatio }),
     ...(properties.material === undefined ? {} : { material: properties.material }),
     ...(properties.pixelSnapping === undefined ? {} : { pixelSnapping: properties.pixelSnapping }),
@@ -1211,7 +1227,7 @@ function objectProperties<Technique extends RasterFormatMetadata>(
 
 function groupObjectProperties(properties: R3fTextGroupProps): TextGroupElementProps {
   const object = { ...properties } as Record<string, unknown>;
-  for (const key of ['pixelSnapping', 'children', 'onError', 'ref']) delete object[key];
+  for (const key of ['material', 'renderOrder', 'pixelSnapping', 'children', 'onError', 'ref']) delete object[key];
   return object as TextGroupElementProps;
 }
 
@@ -1219,37 +1235,4 @@ function assertNoHandleProp(properties: object, owner: 'Text' | 'TextGroup'): vo
   if (Object.hasOwn(properties, 'handle')) {
     throw new TypeError(`R3F ${owner} does not accept a handle prop; select custom handles with GlyphProvider`);
   }
-}
-
-function sameDesiredText<Technique extends RasterFormatMetadata>(
-  left: (Partial<StandaloneTextProperties<Technique>> & { readonly text: TextInput<Technique> }) | undefined,
-  right: Partial<StandaloneTextProperties<Technique>> & { readonly text: TextInput<Technique> },
-): boolean {
-  if (
-    left === undefined ||
-    left.font !== right.font ||
-    !sameSnapshot(left.text, right.text) ||
-    left.rasterPixelRatio !== right.rasterPixelRatio ||
-    left.material !== right.material ||
-    !sameSnapshot(left.style, right.style) ||
-    !sameSnapshot(left.layout, right.layout) ||
-    !sameSnapshot(left.constraints, right.constraints) ||
-    !sameSnapshot(left.flow, right.flow)
-  )
-    return false;
-  return true;
-}
-
-function sameSnapshot(left: unknown, right: unknown): boolean {
-  if (Object.is(left, right)) return true;
-  if (typeof left !== 'object' || left === null || typeof right !== 'object' || right === null) return false;
-  if (Array.isArray(left) || Array.isArray(right)) {
-    if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length) return false;
-    return left.every((value, index) => sameSnapshot(value, right[index]));
-  }
-  const leftRecord = left as Readonly<Record<string, unknown>>;
-  const rightRecord = right as Readonly<Record<string, unknown>>;
-  const keys = Object.keys(leftRecord);
-  if (keys.length !== Object.keys(rightRecord).length) return false;
-  return keys.every((key) => key in rightRecord && sameSnapshot(leftRecord[key], rightRecord[key]));
 }

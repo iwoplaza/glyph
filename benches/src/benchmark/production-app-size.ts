@@ -25,6 +25,16 @@ export async function measureR3fHelloWorldProductionBundle(
   );
 }
 
+export async function measureTresPlaygroundProductionBundle(
+  workspace = process.cwd(),
+): Promise<ProductionJavaScriptMeasurement> {
+  return measureProductionJavaScriptBundle(
+    'tres-playground-production-js',
+    'Tres playground app JS',
+    join(workspace, 'apps/tres-playground/dist'),
+  );
+}
+
 async function measureProductionJavaScriptBundle(
   id: string,
   label: string,

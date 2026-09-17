@@ -1,12 +1,23 @@
 import { createHash } from 'node:crypto';
-import { brotliCompressSync, constants, gunzipSync, gzipSync } from 'node:zlib';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { build } from 'vite';
+import { promisify } from 'node:util';
+import { brotliCompress, brotliCompressSync, constants, gunzipSync, gzip, gzipSync } from 'node:zlib';
 
+import {
+  bundleJavaScriptVariants,
+  externalizeGlyphWasmPlugin,
+  type JavaScriptBundle,
+} from '../src/benchmark/vite-size-bundle.ts';
 import { assertPackageSizeReportFresh, type PackageSizeReport } from '../src/benchmark/package-size-report.ts';
-import { measureR3fHelloWorldProductionBundle } from '../src/benchmark/production-app-size.ts';
-import { measurePeerExternalizedReactAdapter } from '../src/benchmark/react-adapter-size.ts';
+import {
+  measureR3fHelloWorldProductionBundle,
+  measureTresPlaygroundProductionBundle,
+} from '../src/benchmark/production-app-size.ts';
+import {
+  measurePeerExternalizedReactAdapter,
+  measurePeerExternalizedVueAdapter,
+} from '../src/benchmark/framework-adapter-size.ts';
 
 interface MeasuredEntry {
   readonly id: string;
@@ -29,14 +40,7 @@ interface UnavailableEntry {
 
 type SizeEntry = MeasuredEntry | UnavailableEntry;
 
-interface BundleResult {
-  readonly bytes: Uint8Array;
-  readonly includedModules: ReadonlySet<string>;
-  readonly excludedDynamicModules: ReadonlySet<string>;
-}
-
-const root = fileURLToPath(new URL('..', import.meta.url));
-const bundleTimeoutMs = 3 * 60 * 1_000;
+const workspace = fileURLToPath(new URL('../../', import.meta.url));
 const diagnosticModuleFragments = ['/packages/glyph/dist/internal/raster-baker-profile'];
 const diagnosticCodeFragments = [
   'createProfiledDirectRasterBakerFromInstance',
@@ -49,21 +53,11 @@ const diagnosticCodeFragments = [
   'teardown continued after',
   'process.env.NODE_ENV',
 ];
+const brotliCompressAsync = promisify(brotliCompress);
+const gzipAsync = promisify(gzip);
 
 function reportMeasurement(message: string): void {
   process.stderr.write(`[package-size] ${message}\n`);
-}
-
-async function withinBundleDeadline<T>(label: string, task: Promise<T>): Promise<T> {
-  let timeout: NodeJS.Timeout | undefined;
-  const deadline = new Promise<never>((_resolve, reject) => {
-    timeout = setTimeout(() => reject(new Error(`${label} exceeded ${bundleTimeoutMs} ms`)), bundleTimeoutMs);
-  });
-  try {
-    return await Promise.race([task, deadline]);
-  } finally {
-    if (timeout !== undefined) clearTimeout(timeout);
-  }
 }
 
 function isTextPeerDependency(id: string): boolean {
@@ -85,121 +79,9 @@ function isTextPeerDependency(id: string): boolean {
   );
 }
 
-async function bundle(
-  entry: string,
-  minify: false | 'oxc',
-  includeDynamic: boolean,
-  externalizeWasmAsset: boolean,
-  externalizePeerDependencies: boolean,
-): Promise<BundleResult> {
-  const mode = minify === false ? 'raw' : 'minified';
-  const result = await withinBundleDeadline(
-    `${entry} ${mode} bundle`,
-    build({
-      configFile: false,
-      logLevel: 'silent',
-      // Measure what a consumer actually ships. A library build deliberately leaves
-      // `process.env.NODE_ENV` for the consuming bundler to replace, so measuring without
-      // this define would price development-only diagnostics into every recorded ceiling.
-      define: { 'process.env.NODE_ENV': JSON.stringify('production') },
-      plugins: externalizeWasmAsset
-        ? [
-            {
-              name: 'externalize-package-wasm-for-size-measurement',
-              transform(code, id) {
-                const wasmAssets = [
-                  'bitmap-baker.wasm',
-                  'font-baker.wasm',
-                  'text-shaper.wasm',
-                  'mtsdf-baker.wasm',
-                  'slug-baker.wasm',
-                ];
-                let transformed = code;
-                let changed = false;
-                for (const asset of wasmAssets) {
-                  const expression = new RegExp(
-                    `new URL\\((["'\x60])\\.{1,2}\\/(?:\\.{1,2}\\/)*(?:dist\\/)?${asset}\\1,\\s*import\\.meta\\.url\\)`,
-                    'g',
-                  );
-                  transformed = transformed.replace(expression, (_match, quote: string) => {
-                    changed = true;
-                    return `new URL(${quote}${asset}${quote}, ${quote}https://size.invalid/${quote})`;
-                  });
-                }
-                if (!changed || !id.includes('/packages/glyph/')) return;
-                return transformed;
-              },
-            },
-          ]
-        : [],
-      root,
-      build: {
-        lib: {
-          entry,
-          formats: ['es'],
-          fileName: 'entry',
-        },
-        minify,
-        target: 'es2022',
-        write: false,
-        rollupOptions: {
-          preserveEntrySignatures: 'strict',
-          ...(externalizePeerDependencies
-            ? {
-                external: isTextPeerDependency,
-              }
-            : {}),
-        },
-      },
-    }),
-  );
-  const builds = Array.isArray(result) ? result : [result];
-  const chunks = builds.flatMap((output) => {
-    if (!('output' in output)) throw new Error('Package-size build unexpectedly entered watch mode');
-    return output.output.filter((artifact) => artifact.type === 'chunk');
-  });
-  const included = new Set<string>();
-  const byFileName = new Map(chunks.map((chunk) => [chunk.fileName, chunk]));
-  const visit = (fileName: string): void => {
-    if (included.has(fileName)) return;
-    const chunk = byFileName.get(fileName);
-    if (chunk === undefined && externalizePeerDependencies && isTextPeerDependency(fileName)) return;
-    if (chunk === undefined) throw new Error(`Package-size build omitted static chunk ${fileName}`);
-    included.add(fileName);
-    for (const imported of chunk.imports) visit(imported);
-  };
-  if (includeDynamic) {
-    for (const chunk of chunks) included.add(chunk.fileName);
-  } else {
-    for (const chunk of chunks) if (chunk.isEntry) visit(chunk.fileName);
-  }
-  const bundledCode = chunks.filter(({ fileName }) => included.has(fileName)).map(({ code }) => code);
-  if (bundledCode.length === 0) throw new Error(`Package-size entry emitted no JavaScript: ${entry}`);
-  const includedModules = new Set(
-    chunks.filter(({ fileName }) => included.has(fileName)).flatMap(({ moduleIds }) => moduleIds),
-  );
-  const excludedDynamicModules = new Set(
-    chunks
-      .filter(({ fileName }) => !included.has(fileName) && chunkIsDynamicallyReachable(fileName, chunks))
-      .flatMap(({ moduleIds }) => moduleIds),
-  );
-  return {
-    bytes: new TextEncoder().encode(bundledCode.join('\n')),
-    includedModules,
-    excludedDynamicModules,
-  };
-}
-
-function chunkIsDynamicallyReachable(
-  fileName: string,
-  chunks: ReadonlyArray<{ readonly dynamicImports: readonly string[] }>,
-): boolean {
-  return chunks.some(({ dynamicImports }) => dynamicImports.includes(fileName));
-}
-
 function assertGraphBoundary(
   label: string,
-  graph: BundleResult,
+  graph: JavaScriptBundle,
   expectedDynamic: readonly string[],
   excludedInitial: readonly string[],
 ): void {
@@ -215,7 +97,7 @@ function assertGraphBoundary(
   }
 }
 
-function assertThinJavaScriptGraph(label: string, graph: BundleResult, excludedCode: readonly string[]): void {
+function assertThinJavaScriptGraph(label: string, graph: JavaScriptBundle, excludedCode: readonly string[]): void {
   for (const fragment of diagnosticModuleFragments) {
     const matches = [...graph.includedModules].filter((module) => module.includes(fragment));
     if (matches.length > 0) {
@@ -259,10 +141,14 @@ async function measureJavaScript(
   excludedCode: readonly string[] = [],
 ): Promise<MeasuredEntry> {
   reportMeasurement(`measuring ${label}`);
-  const [raw, minified] = await Promise.all([
-    bundle(fileURLToPath(entry), false, includeDynamic, externalizeWasmAsset, externalizePeerDependencies),
-    bundle(fileURLToPath(entry), 'oxc', includeDynamic, externalizeWasmAsset, externalizePeerDependencies),
-  ]);
+  const { raw, minified } = await bundleJavaScriptVariants({
+    entry: fileURLToPath(entry),
+    includeDynamic,
+    label: `${label} bundle`,
+    workspace,
+    ...(externalizePeerDependencies ? { external: isTextPeerDependency } : {}),
+    ...(externalizeWasmAsset ? { plugins: [externalizeGlyphWasmPlugin()] } : {}),
+  });
   if (graphBoundary !== undefined) {
     assertGraphBoundary(label, raw, graphBoundary.expectedDynamic, graphBoundary.excludedInitial);
     assertGraphBoundary(label, minified, graphBoundary.expectedDynamic, graphBoundary.excludedInitial);
@@ -312,6 +198,14 @@ async function measureFontAsset(
 ): Promise<MeasuredEntry> {
   const transferred = await readFile(source);
   const payload = transport === 'gzip' ? gunzipSync(transferred) : transferred;
+  const [gzipBytes, brotliBytes] = await Promise.all([
+    transport === 'gzip'
+      ? Promise.resolve(transferred.byteLength)
+      : gzipAsync(payload, { level: 9 }).then((compressed) => compressed.byteLength),
+    brotliCompressAsync(payload, {
+      params: { [constants.BROTLI_PARAM_QUALITY]: 11 },
+    }).then((compressed) => compressed.byteLength),
+  ]);
   return {
     id,
     label,
@@ -320,8 +214,8 @@ async function measureFontAsset(
     sha256: sha256(transferred),
     rawBytes: payload.byteLength,
     minifiedBytes: payload.byteLength,
-    gzipBytes: transport === 'gzip' ? transferred.byteLength : gzipSync(payload, { level: 9 }).byteLength,
-    brotliBytes: compression(payload).brotliBytes,
+    gzipBytes,
+    brotliBytes,
   };
 }
 
@@ -369,6 +263,7 @@ const coreJavaScript = await measureJavaScript(
       '/packages/glyph/dist/runtime-bake-worker',
       '/packages/glyph/dist/internal/font-face-transfer-runtime',
       '/packages/glyph/dist/react',
+      '/packages/glyph/dist/vue',
       '/packages/glyph/dist/three',
       '/packages/glyph/dist/raster/bitmap',
       '/packages/glyph/dist/raster/msdf',
@@ -398,6 +293,7 @@ const glyphConfig = await measureJavaScript(
     expectedDynamic: [],
     excludedInitial: [
       '/packages/glyph/dist/react',
+      '/packages/glyph/dist/vue',
       '/packages/glyph/dist/three',
       '/packages/glyph/dist/shaders/tsl',
       '/packages/glyph/dist/three/',
@@ -416,6 +312,7 @@ const typegpuIntegration = await measureJavaScript(
     expectedDynamic: [],
     excludedInitial: [
       '/packages/glyph/dist/react',
+      '/packages/glyph/dist/vue',
       '/packages/glyph/dist/three',
       '/packages/glyph/dist/shaders/tsl',
       '/packages/glyph/dist/three/',
@@ -444,6 +341,7 @@ const threeRuntime = await measureJavaScript(
   },
 );
 const reactRuntime = await measurePeerExternalizedReactAdapter(fileURLToPath(new URL('../../', import.meta.url)));
+const vueRuntime = await measurePeerExternalizedVueAdapter(fileURLToPath(new URL('../../', import.meta.url)));
 const threeTypeGpuRuntime = await measureJavaScript(
   'three-typegpu-runtime-js',
   'Three.js + TypeGPU adapter JS',
@@ -463,42 +361,44 @@ const threeTypeGpuRuntime = await measureJavaScript(
     ],
   },
 );
-const interBitmap = await measureFontAsset(
-  'font-inter-bitmap-16-32',
-  'Inter font · Bitmap',
-  new URL('../fixtures/rendering/inter-bitmap-16-32.font.glb', import.meta.url),
-  'identity',
-);
-const interMsdf = await measureFontAsset(
-  'font-inter-mtsdf',
-  'Inter font · MTSDF',
-  new URL('../fixtures/rendering/inter-mtsdf.font.glb.gz', import.meta.url),
-  'gzip',
-);
-const interSlug = await measureFontAsset(
-  'font-inter-slug',
-  'Inter font · Slug',
-  new URL('../fixtures/rendering/inter-slug.font.glb.gz', import.meta.url),
-  'gzip',
-);
-const iconsBitmap = await measureFontAsset(
-  'font-icons-bitmap-16-32',
-  'Font Awesome icons · Bitmap',
-  new URL('../fixtures/rendering/font-awesome-free-6.7.2-bitmap-16-32.font.glb', import.meta.url),
-  'identity',
-);
-const iconsMsdf = await measureFontAsset(
-  'font-icons-mtsdf',
-  'Font Awesome icons · MTSDF',
-  new URL('../fixtures/rendering/font-awesome-free-6.7.2-mtsdf.font.glb.gz', import.meta.url),
-  'gzip',
-);
-const iconsSlug = await measureFontAsset(
-  'font-icons-slug',
-  'Font Awesome icons · Slug',
-  new URL('../fixtures/rendering/font-awesome-free-6.7.2-slug.font.glb.gz', import.meta.url),
-  'gzip',
-);
+const [interBitmap, interMsdf, interSlug, iconsBitmap, iconsMsdf, iconsSlug] = await Promise.all([
+  measureFontAsset(
+    'font-inter-bitmap-16-32',
+    'Inter font · Bitmap',
+    new URL('../fixtures/rendering/inter-bitmap-16-32.font.glb', import.meta.url),
+    'identity',
+  ),
+  measureFontAsset(
+    'font-inter-mtsdf',
+    'Inter font · MTSDF',
+    new URL('../fixtures/rendering/inter-mtsdf.font.glb.gz', import.meta.url),
+    'gzip',
+  ),
+  measureFontAsset(
+    'font-inter-slug',
+    'Inter font · Slug',
+    new URL('../fixtures/rendering/inter-slug.font.glb.gz', import.meta.url),
+    'gzip',
+  ),
+  measureFontAsset(
+    'font-icons-bitmap-16-32',
+    'Font Awesome icons · Bitmap',
+    new URL('../fixtures/rendering/font-awesome-free-6.7.2-bitmap-16-32.font.glb', import.meta.url),
+    'identity',
+  ),
+  measureFontAsset(
+    'font-icons-mtsdf',
+    'Font Awesome icons · MTSDF',
+    new URL('../fixtures/rendering/font-awesome-free-6.7.2-mtsdf.font.glb.gz', import.meta.url),
+    'gzip',
+  ),
+  measureFontAsset(
+    'font-icons-slug',
+    'Font Awesome icons · Slug',
+    new URL('../fixtures/rendering/font-awesome-free-6.7.2-slug.font.glb.gz', import.meta.url),
+    'gzip',
+  ),
+]);
 
 const entries: SizeEntry[] = [
   glyphConfig,
@@ -507,8 +407,10 @@ const entries: SizeEntry[] = [
   textShaperWasm,
   threeRuntime,
   reactRuntime,
+  vueRuntime,
   threeTypeGpuRuntime,
   await measureR3fHelloWorldProductionBundle(fileURLToPath(new URL('../../', import.meta.url))),
+  await measureTresPlaygroundProductionBundle(fileURLToPath(new URL('../../', import.meta.url))),
   interBitmap,
   interMsdf,
   interSlug,

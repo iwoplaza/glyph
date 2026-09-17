@@ -150,6 +150,10 @@ renderer, scene, or canvas.
 
 ## Cache and ownership rules
 
+Paragraph props describe complete desired state. Removing `style`, `layout`, `constraints`, `flow`, `material`, or
+`rasterPixelRatio` restores its default. Replace property objects through normal React updates; the adapter keeps
+detached snapshots for comparison and requests a frame after applying the update on a demand-rendered Canvas.
+
 - The Glyph FontFace graph is the sole semantic cache for source bytes, decoded formats, dependencies, and renderer
   resources.
 - `suspend-react` retains stable Promise and error identity only so React retries the same operation safely.

@@ -68,6 +68,14 @@ export const packageSizeBudgets = {
     gzipBytes: 136_000,
     brotliBytes: 112_000,
   },
+  // The Vue adapter includes Glyph's root and Three integration while Vue, Tres, and Three remain consumer peers.
+  // The initial surface measures 541,957 raw / 529,712 minified / 133,003 gzip / 109,563 Brotli bytes.
+  'vue-runtime-js': {
+    rawBytes: 546_000,
+    minifiedBytes: 534_000,
+    gzipBytes: 136_000,
+    brotliBytes: 112_000,
+  },
   // The existing production hello-world application intentionally includes its complete consumer graph. The R3F v9
   // compatibility change measures 2,621,866 emitted / 739,256 gzip / 561,836 Brotli bytes across its JavaScript chunks.
   'r3f-hello-world-production-js': {
@@ -75,6 +83,14 @@ export const packageSizeBudgets = {
     minifiedBytes: 2_650_000,
     gzipBytes: 750_000,
     brotliBytes: 570_000,
+  },
+  // The Tres playground is the complete production consumer graph for the Vue adapter.
+  // Its initial production build measures 2,018,185 emitted / 564,225 gzip / 451,855 Brotli bytes.
+  'tres-playground-production-js': {
+    rawBytes: 2_040_000,
+    minifiedBytes: 2_040_000,
+    gzipBytes: 570_000,
+    brotliBytes: 456_000,
   },
   // `/three/typegpu` prices the complete optional integration with peers external.
   'three-typegpu-runtime-js': {

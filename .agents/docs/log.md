@@ -261,6 +261,13 @@
 
 ## 2026-09-10
 
+- **Added the Vue and TresJS adapter** — `@pmndrs/glyph/vue` publishes `GlyphProvider`, `Text`, `TextGroup`, and
+  `useFont` with typed `useBitmap`/`useMsdf`/`useSlug` leaves. The adapter reconciles the same retained Three objects
+  through the TresJS custom renderer with private catalogue names, stable constructor args, keyed remounts, one
+  default root per canvas, and reactive font readiness instead of render-phase suspension. Shared desired-snapshot
+  comparison moved into an internal module used by both React and Vue. A happy-dom TresCanvas host proves lease
+  balance under Tres disposal; a new `apps/tres-playground` Vite application renders every raster format.
+
 - **Separated placement occurrence identity from run geometry revisions** — Placement slots now key on paragraph
   incarnation, exact paragraph/boundary-source/ellipsis run source, stable segment/source anchors, numeric block, and
   glyph source. A font or local-geometry revision continues to bump the owning run generation without needlessly

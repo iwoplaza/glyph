@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "pnpm --filter @pmndrs/glyph build && vite",
+    "dev": "pnpm --filter @pmndrs/glyph build && vite --port ${PORT:-5273}",
     "build": "node ./scripts/build.mts",
     "size": "node ./scripts/measure-package-sizes.mts",
     "test": "node ./scripts/test.mts",

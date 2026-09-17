@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { appendFile, readFile } from 'node:fs/promises';
 
 import { formatCompactSizeLimitMarkdown, type SizeLimitRow } from './package-size-summary.ts';
 
@@ -24,6 +24,8 @@ if (current === undefined || base === undefined) {
   throw new Error('Compact package-size report lost a completed measurement');
 }
 const body = `${heading}\n${formatCompactSizeLimitMarkdown(base, current)}`;
+const stepSummary = process.env.GITHUB_STEP_SUMMARY;
+if (stepSummary !== undefined) await appendFile(stepSummary, `${body}\n`);
 const repository = requiredEnvironment('SIZE_REPORT_REPOSITORY');
 const pullRequest = requiredEnvironment('SIZE_REPORT_PR');
 const token = requiredEnvironment('GH_TOKEN');
@@ -38,7 +40,14 @@ const response = await fetch(endpoint, {
   headers: githubHeaders(token),
   body: JSON.stringify({ body }),
 });
-if (!response.ok) throw new Error(`GitHub package-size comment failed: ${response.status} ${await response.text()}`);
+if (!response.ok) {
+  const responseBody = await response.text();
+  if (response.status === 403 && responseBody.includes('Resource not accessible by integration')) {
+    console.warn('GitHub withheld pull-request comment permission; package sizes remain in the job summary');
+    process.exit(0);
+  }
+  throw new Error(`GitHub package-size comment failed: ${response.status} ${responseBody}`);
+}
 
 interface Comment {
   readonly id: number;

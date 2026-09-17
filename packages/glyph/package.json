@@ -95,6 +95,23 @@
       "source": "./src/react/index.ts",
       "import": "./dist/react/index.js"
     },
+    "./vue": {
+      "types": {
+        "source": "./src/vue.ts",
+        "default": "./dist/vue.d.ts"
+      },
+      "source": "./src/vue.ts",
+      "import": "./dist/vue.js"
+    },
+    "./vue/internal/*": null,
+    "./vue/*": {
+      "types": {
+        "source": "./src/vue/*.ts",
+        "default": "./dist/vue/*.d.ts"
+      },
+      "source": "./src/vue/*.ts",
+      "import": "./dist/vue/*.js"
+    },
     "./raster/internal/*": null,
     "./config/font-library": null,
     "./config/raster-host": null,
@@ -206,6 +223,7 @@
     "@cto.af/linebreak": "4.0.3",
     "@react-three/fiber": "catalog:renderer",
     "@react-three/test-renderer": "catalog:renderer",
+    "@tresjs/core": "5.8.3",
     "@typegpu/gl": "catalog:renderer",
     "@typegpu/three": "catalog:renderer",
     "@types/node": "24.13.3",
@@ -215,6 +233,7 @@
     "@webgpu/types": "0.1.71",
     "binaryen": "129.0.0",
     "eslint-plugin-react-you-might-not-need-an-effect": "1.0.1",
+    "happy-dom": "20.14.0",
     "oxfmt": "0.35.0",
     "oxlint": "1.75.0",
     "react": "catalog:renderer",
@@ -224,18 +243,24 @@
     "typescript": "7.0.2",
     "unicode-property-value-aliases": "3.9.0",
     "unplugin-typegpu": "0.12.2",
-    "vite": "8.1.5"
+    "vite": "8.1.5",
+    "vue": "3.5.42"
   },
   "peerDependencies": {
     "@react-three/fiber": ">=9.7.0 <10 || >=10.0.0-alpha.4 <11",
+    "@tresjs/core": ">=5.8.3 <6",
     "@typegpu/gl": ">=0.12.4 <0.13",
     "@typegpu/three": ">=0.12.1 <0.13",
     "react": ">=19.0.0 <19.3",
     "three": ">=0.185.0",
-    "typegpu": ">=0.12.5 <0.13"
+    "typegpu": ">=0.12.5 <0.13",
+    "vue": ">=3.5 <4"
   },
   "peerDependenciesMeta": {
     "@react-three/fiber": {
+      "optional": true
+    },
+    "@tresjs/core": {
       "optional": true
     },
     "@typegpu/gl": {
@@ -251,6 +276,9 @@
       "optional": true
     },
     "typegpu": {
+      "optional": true
+    },
+    "vue": {
       "optional": true
     }
   },

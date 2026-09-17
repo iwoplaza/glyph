@@ -175,6 +175,7 @@ label.geometry satisfies import('three/webgpu').BufferGeometry;
 // @ts-expect-error Box3 compatibility does not expose mutable renderer geometry.
 label.geometry = threeGeometry;
 const labels = three.createTextGroup({ pixelSnapping: true });
+label.set({ material: undefined, flow: undefined, style: undefined, layout: undefined, constraints: undefined });
 // @ts-expect-error TextGroup material mutation has one property surface, not a duplicate setter method.
 labels.setMaterial(undefined);
 const capacityThree = glyph.handle(

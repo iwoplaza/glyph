@@ -30,7 +30,9 @@ describe('independent package-size report', () => {
       'text-shaper-wasm',
       'three-runtime-js',
       'react-runtime-js',
+      'vue-runtime-js',
       'r3f-hello-world-production-js',
+      'tres-playground-production-js',
       'three-typegpu-runtime-js',
       'typegpu-direct-renderer-js',
       'bitmap-runtime-js',
@@ -76,7 +78,9 @@ describe('independent package-size report', () => {
       'Shaper Wasm',
       'Three.js adapter JS',
       'React adapter JS',
+      'Vue adapter JS',
       'R3F hello-world app JS',
+      'Tres playground app JS',
       'Inter font · Bitmap',
       'Inter font · MTSDF',
       'Inter font · Slug',
@@ -111,7 +115,7 @@ describe('independent package-size report', () => {
     const base = current.map((row) => ({ ...row, size: row.size - 1 }));
     const markdown = formatCompactSizeLimitMarkdown(base, current);
     expect(markdown.split('\n')[0]).toBe('| Surface | gzip | Surface | gzip |');
-    expect(markdown.split('\n')).toHaveLength(13);
+    expect(markdown.split('\n')).toHaveLength(14);
     for (const { label } of summarizePackageSizes(report)) {
       expect(markdown.split(label)).toHaveLength(2);
     }

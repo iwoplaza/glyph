@@ -77,9 +77,9 @@ export type TextProperties<Format extends RasterFormatMetadata> = TextBaseProper
 export type StandaloneTextProperties<Format extends RasterFormatMetadata> = TextProperties<Format> &
   Readonly<{ pixelSnapping?: boolean }>;
 
-/** Partial desired-state replacement accepted by {@link Text.set}. */
+/** Partial desired-state replacement accepted by {@link Text.set}; explicit undefined clears material or flow. */
 export type TextUpdate<Format extends RasterFormatMetadata> = Partial<Omit<TextBaseProperties<Format>, 'flow'>> &
-  Readonly<{ text?: TextInput<Format>; material?: ThreeTextMaterial; flow?: TextFlow | undefined }>;
+  Readonly<{ text?: TextInput<Format>; material?: ThreeTextMaterial | undefined; flow?: TextFlow | undefined }>;
 
 /** Publication controls owned by every anonymous or named Three root. */
 export interface ThreeRootOptions {
@@ -819,7 +819,7 @@ export class Text<Format extends RasterFormatMetadata> extends THREE.Object3D {
     return this.#desired.material;
   }
   set material(value: ThreeTextMaterial | undefined) {
-    this.set({ material: value } as TextUpdate<Format>);
+    this.set({ material: value });
   }
 
   set(update: TextUpdate<Format>): void {

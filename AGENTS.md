@@ -36,7 +36,7 @@ Use the exact root toolchain pins through mise. Agent commands must enter that e
 
 Exercise repository workflows through named `pnpm` scripts from the workspace root. Prefer a short root alias for a maintainer-facing application workflow. When a repeatable build, test, profile, capture, generation, or development command is missing, add the package-owned script and root alias before running it; do not leave the working procedure as an agent-only shell recipe or temporary probe.
 
-Before searching for or inventing a specialized maintenance command, run `mise exec -- pnpm scripts list`. Use `mise exec -- pnpm scripts show <name>` to inspect its prerequisites and writes, then `mise exec -- pnpm scripts run <name> -- [arguments]` to execute it. Contributor-facing root commands are limited to `bake`, `dev`, `build`, `test`, `check`, and this `scripts` index; specialized workflows describe themselves in their source metadata instead of expanding package manifests.
+Before searching for or inventing a specialized maintenance command, run `mise exec -- pnpm scripts list`. Use `mise exec -- pnpm scripts show <name>` to inspect its prerequisites and writes, then `mise exec -- pnpm scripts run <name> -- [arguments]` to execute it. Contributor-facing root commands are limited to `dev`, `build`, `test`, `check`, and this `scripts` index; invoke the package CLI as `pnpm glyph`. Specialized workflows describe themselves in their source metadata instead of expanding package manifests.
 
 Run `mise exec -- pnpm scripts run repo:hooks:install` once per clone. It installs the repository's native pre-commit
 dispatcher in `git rev-parse --git-common-dir/hooks`, so every worktree shares it without `core.hooksPath` or a hook

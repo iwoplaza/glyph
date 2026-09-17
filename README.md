@@ -29,9 +29,10 @@ renderer.render(scene, camera);
 
 The `glyph` CLI bakes fonts into glb files containing bitmap, msdf, and/or slug font data.
 While glyph supports runtime and offline baking, baked fonts require minimal additional processing and load quickly.
+From a consumer project that depends on `@pmndrs/glyph`:
 
 ```sh
-pnpm exec glyph bake --input Inter-Regular.ttf --output Inter.font.glb --bitmap 32 --msdf --slug
+pnpm glyph bake --input Inter-Regular.ttf --output Inter.font.glb --bitmap 32 --msdf --slug
 ```
 
 Subset a font with `--unicodes U+0020-007E` to bake only a fixed range or specific glyphs for smaller font assets.  
@@ -122,7 +123,7 @@ export const CustomConfig = defineGlyphConfig({
 
   // Resolve a glyph resource to a library specific resource (texture, shader, buffer...)
   resolve: ({ format, resourceName, payload }) => {
-    return bindResource({ name: resourceName, resource: payload }), () => destroy());
+    return resourceLease(bindResource({ name: resourceName, resource: payload }), () => destroy());
   },
 
   // Render the glyphs. Decode the plan, synchronize library transforms, dispose of resources when glyph releases them
@@ -133,6 +134,18 @@ export const CustomConfig = defineGlyphConfig({
       syncTransforms: () => undefined,
       dispose: () => selectedDevice.reset(),
     };
+  },
+
+  // Create the renderer-specific root extension and connect it to Glyph's retained root
+  root: {
+    create: (context) => {
+      if (context.fonts === undefined) throw new TypeError('CustomConfig must declare font formats');
+      const extension = new CustomRoot(context.fonts, context.services);
+      return context.create(extension, {
+        boundary: Object.freeze({ name: context.name }),
+        shape: { accepted: (drawList) => extension.accept(drawList) },
+      });
+    },
   },
 });
 ```
@@ -151,7 +164,6 @@ import { bitmapFragment, bitmapVertexSnapped } from '@pmndrs/glyph/shaders/typeg
 
 - Emoji
 - Micro JS shaping engine for basic shaping
-- Editorial flow / polygon cut-outs
 - Glyph page cache
 - Language aware word breaks
 

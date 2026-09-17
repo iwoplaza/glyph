@@ -422,6 +422,84 @@ test('Text renderOrder ranks grouped paragraphs while standalone Text keeps Thre
   font.dispose();
 });
 
+test('rank-only updates republish bindings when one storage batch has multiple materials', async (t) => {
+  const three = await createThreeTestHandle(t);
+  const font = await loadFont({ baked: { bytes: await readFile(fontUrl) } }, bitmap({ strikes: [16] }));
+  const namedMaterial = (name) =>
+    defineTextMaterial((context) => {
+      const material = context.createDefaultMaterial();
+      material.name = name;
+      return material;
+    });
+  const scene = new THREE.Scene();
+  const group = three.createTextGroup();
+  const first = three.createText({ font, material: namedMaterial('first'), text: 'first' });
+  const second = three.createText({ font, material: namedMaterial('second'), text: 'second' });
+  group.add(first, second);
+  scene.add(group);
+  scene.updateMatrixWorld(true);
+
+  try {
+    assert.equal(rootDraws(scene).length, 2);
+    const materialTransforms = () =>
+      Object.fromEntries(
+        rootDraws(scene).map((draw) => {
+          const attribute = draw.geometry.getAttribute(glyphAttribute(threeSystemBuffers.transformIndex.id));
+          const start = draw.userData.pmndrsGlyphRunStart;
+          return [
+            draw.material.name,
+            Array.from({ length: draw.geometry.instanceCount }, (_, index) => attribute.getX(start + index)),
+          ];
+        }),
+      );
+    const authoredTransforms = materialTransforms();
+    first.renderOrder = 1;
+    second.renderOrder = 0;
+    instrumentedGlyph.reset();
+    scene.updateMatrixWorld(true);
+    const counts = instrumentedGlyph.latestPlanCounts();
+    assert.ok(counts.draws > 0, 'multiple material draws must be republished after physical reordering');
+    assert.ok(counts.primitives > 0, 'multiple material spans must be republished with their draws');
+    assert.deepEqual(materialTransforms(), authoredTransforms, 'each material keeps its authored transform span');
+  } finally {
+    first.dispose();
+    second.dispose();
+    group.dispose();
+    font.dispose();
+  }
+});
+
+test('rank-only updates republish bindings for direct paragraph transforms', async (t) => {
+  const three = await createThreeTestHandle(t, defineThreeConfig({ transformMode: 'direct' }));
+  const font = await loadFont({ baked: { bytes: await readFile(fontUrl) } }, bitmap({ strikes: [16] }));
+  const scene = new THREE.Scene();
+  const group = three.createTextGroup();
+  const first = three.createText({ font, text: 'first' });
+  const second = three.createText({ font, text: 'second' });
+  first.position.x = -10;
+  second.position.x = 10;
+  group.add(first, second);
+  scene.add(group);
+  scene.updateMatrixWorld(true);
+
+  try {
+    assert.equal(rootDraws(scene).length, 2);
+    first.renderOrder = 1;
+    second.renderOrder = 0;
+    instrumentedGlyph.reset();
+    scene.updateMatrixWorld(true);
+    const counts = instrumentedGlyph.latestPlanCounts();
+    assert.ok(counts.draws > 0, 'direct transform draws must be republished after physical reordering');
+    assert.ok(counts.primitives > 0, 'direct transform spans must be republished with their draws');
+    assert.equal(rootDraws(scene).length, 2);
+  } finally {
+    first.dispose();
+    second.dispose();
+    group.dispose();
+    font.dispose();
+  }
+});
+
 test('an unstated TextGroup keeps child paragraph ranks out of Three material keys', async (t) => {
   const three = await createThreeTestHandle(t);
   const font = await loadFont({ baked: { bytes: await readFile(fontUrl) } }, bitmap({ strikes: [16] }));

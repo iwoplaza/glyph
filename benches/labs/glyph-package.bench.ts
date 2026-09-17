@@ -268,6 +268,27 @@ group('retained batching at 1,000 labels @publication', () => {
     disposeLabels(created);
   });
 
+  bench('reorder then edit one of 1000 retained labels @publication', function* () {
+    const created = createLabels(1_000);
+    for (const [index, label] of created.labels.entries()) label.renderOrder = index;
+    created.scene.updateMatrixWorld(true);
+    if (created.textGroup.error !== undefined) throw created.textGroup.error;
+    let reversed = false;
+    const textCount = yield () => {
+      reversed = !reversed;
+      for (const [index, label] of created.labels.entries()) {
+        label.renderOrder = reversed ? created.labels.length - index : index;
+      }
+      created.scene.updateMatrixWorld(true);
+      created.labels[0]!.text = reversed ? 'edited alpha' : 'edited bravo';
+      created.scene.updateMatrixWorld(true);
+      if (created.textGroup.error !== undefined) throw created.textGroup.error;
+      return created.textGroup.textCount;
+    };
+    assert.equal(textCount, created.labels.length);
+    disposeLabels(created);
+  });
+
   bench('measure 1000 unchanged retained labels @cached', function* () {
     const created = createLabels(1_000);
     const expectedGlyphs = created.labels.reduce((total, label) => total + label.measure().glyphCount, 0);

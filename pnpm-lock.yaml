@@ -38,9 +38,6 @@ importers:
 
   .:
     devDependencies:
-      '@pmndrs/glyph':
-        specifier: workspace:*
-        version: link:packages/glyph
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3

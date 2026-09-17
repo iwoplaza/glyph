@@ -29,7 +29,6 @@ renderer.render(scene, camera);
 
 The `glyph` CLI bakes fonts into glb files containing bitmap, msdf, and/or slug font data.
 While glyph supports runtime and offline baking, baked fonts require minimal additional processing and load quickly.
-From a consumer project that depends on `@pmndrs/glyph`:
 
 ```sh
 pnpm glyph bake --input Inter-Regular.ttf --output Inter.font.glb --bitmap 32 --msdf --slug
@@ -139,10 +138,9 @@ export const CustomConfig = defineGlyphConfig({
   // Create the renderer-specific root extension and connect it to Glyph's retained root
   root: {
     create: (context) => {
-      if (context.fonts === undefined) throw new TypeError('CustomConfig must declare font formats');
       const extension = new CustomRoot(context.fonts, context.services);
       return context.create(extension, {
-        boundary: Object.freeze({ name: context.name }),
+        boundary: { name: context.name },
         shape: { accepted: (drawList) => extension.accept(drawList) },
       });
     },

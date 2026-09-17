@@ -25,7 +25,7 @@ The app uses React 19, the React Compiler, the WebGPU R3F entry point, and Three
 - `inter-latin.font.glb` is a true Basic Latin source subset (`U+0020–U+007E`).
 - `font-awesome-world.font.glb` contains only six globe/earth variants.
 
-Both checked assets are produced directly through the published CLI through `pnpm exec glyph bake`, with `--input`,
+Both checked assets are produced directly through the published CLI through `pnpm glyph bake`, with `--input`,
 `--output`, `--unicodes`, `--bitmap`, `--msdf`, and `--slug`. Unicode subsetting uses the package-owned baker Wasm;
 no platform font binary is required. The check
 uses the same commands with `--check`, which rebuilds into temporary storage and requires a byte-identical GLB without

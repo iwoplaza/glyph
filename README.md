@@ -2,6 +2,10 @@
 
 Portable font baking, Unicode shaping, paragraph layout, and batched text rendering for every Canvas.
 
+```sh
+pnpm add @pmndrs/glyph three
+```
+
 ```ts
 import { glyph, msdf } from '@pmndrs/glyph';
 import { ThreeConfig } from '@pmndrs/glyph/three';
@@ -31,7 +35,7 @@ The `glyph` CLI bakes fonts into glb files containing bitmap, msdf, and/or slug 
 While glyph supports runtime and offline baking, baked fonts require minimal additional processing and load quickly.
 
 ```sh
-pnpm exec glyph bake --input Inter-Regular.ttf --output Inter.font.glb --bitmap 32 --msdf --slug
+pnpm glyph bake --input Inter-Regular.ttf --output Inter.font.glb --bitmap 32 --msdf --slug
 ```
 
 Subset a font with `--unicodes U+0020-007E` to bake only a fixed range or specific glyphs for smaller font assets.  
@@ -122,7 +126,7 @@ export const CustomConfig = defineGlyphConfig({
 
   // Resolve a glyph resource to a library specific resource (texture, shader, buffer...)
   resolve: ({ format, resourceName, payload }) => {
-    return bindResource({ name: resourceName, resource: payload }), () => destroy());
+    return resourceLease(bindResource({ name: resourceName, resource: payload }), () => destroy());
   },
 
   // Render the glyphs. Decode the plan, synchronize library transforms, dispose of resources when glyph releases them
@@ -133,6 +137,17 @@ export const CustomConfig = defineGlyphConfig({
       syncTransforms: () => undefined,
       dispose: () => selectedDevice.reset(),
     };
+  },
+
+  // Create the renderer-specific root extension and connect it to Glyph's retained root
+  root: {
+    create: (context) => {
+      const extension = new CustomRoot(context.fonts, context.services);
+      return context.create(extension, {
+        boundary: { name: context.name },
+        shape: { accepted: (drawList) => extension.accept(drawList) },
+      });
+    },
   },
 });
 ```
@@ -147,24 +162,50 @@ import { bitmapShader, msdfShader, slugShader } from '@pmndrs/glyph/shaders/tsl'
 import { bitmapFragment, bitmapVertexSnapped } from '@pmndrs/glyph/shaders/typegpu';
 ```
 
+## Feature status
+
+Glyph is pre-release and its features may change with time. **✅ Stable** is the supported baseline, **🟡 Partial** has the gaps listed below, and **🧪 Experimental** is available but still being evaluated.
+
+| Feature | Status | Support and limitations |
+| --- | --- | --- |
+| Fonts and rich-text styles | ✅ Stable | Mixed-font spans, font fallback, size, color, and spacing. |
+| Unicode shaping | ✅ Stable | Complex scripts, ligatures, bidirectional text, and grapheme-aware boundaries. |
+| Alignment and justification | ✅ Stable | Paragraph alignment, word spacing, first-line indent, and paragraph spacing. |
+| Word wrap and box constraints | ✅ Stable | Unicode line breaking, width/height constraints, clipping, and ellipsis. Language-specific breaking is future work. |
+| Text measurement | ✅ Stable | Text bounds, font metrics, and per-glyph layout queries. |
+| Editorial flow and polygon cut-outs | ✅ Stable | Authored regions and exclusions, projected 3D contours, and drop caps. |
+| Icon fonts | ✅ Stable | Font-based icons, raster subsetting, and glyph-name maps. |
+| Break-apart glyphs | ✅ Stable | Detached glyph and decoration copies with independent transforms. Copies do not follow later source-text edits. |
+| Bitmap rendering | ✅ Stable | Baked size-specific strikes. No outline or shadow effects. |
+| MSDF rendering | ✅ Stable | MTSDF atlases with outline and hard-shadow effects. |
+| Slug rendering | ✅ Stable | Vector-outline rendering. No outline or shadow effects. |
+| Three.js, React Three Fiber, and TSL | ✅ Stable | WebGPU and WebGL2 through `WebGPURenderer`. Standalone TSL shaders are also available. Classic `WebGLRenderer` is not supported. |
+| Custom renderer integration | ✅ Stable | Renderer-neutral `GlyphConfig` API and custom raster/baker extensions. |
+| Wasm engine and SIMD kernels | ✅ Stable | HarfRust shaping and retained Rust layout with SIMD-optimized kernels. |
+| Runtime and offline font baking | ✅ Stable | Node API/CLI baking and browser Worker baking for Bitmap, MSDF, and Slug. |
+| Editorial columns | 🟡 Partial | Sequential column flow. Automatic column balancing is not implemented. |
+| Text decorations | 🟡 Partial | Solid underline, overline, and strikethrough. Double, dotted, dashed, and wavy styles are not implemented. |
+| CJK | 🟡 Partial | Horizontal shaping and layout. Large-coverage paging and vertical writing are future work. |
+| Direct TypeGPU rendering and shaders | 🧪 Experimental | Bitmap, MSDF, and Slug in caller-owned WebGPU render passes, plus standalone shader exports. |
+| TypeGPU shaders in Three.js | 🧪 Experimental | WebGPU and WebGL2 adapters. Full visual parity with the native TSL path is not yet established. |
+
 ## Roadmap
 
-- Emoji
-- Micro JS shaping engine for basic shaping
-- Editorial flow / polygon cut-outs
-- Glyph page cache
-- Language aware word breaks
+Future work includes:
 
-Glyph currently provides fonts, styles, alignment, justification, word-wrap, box constraints, editorial columns, icon fonts, decorations, CJK, break-apart glyphs, bitmap/msdf/slug rendering, tsl, typegpu, custom integration api, wasm engine with SIMD shaping kernels, and runtime/offline font baking.
+- **Color emoji.** Color glyph layers and bitmap resources.
+- **Micro JS shaping engine.** A small alternative for basic shaping.
+- **Glyph page cache.** On-demand raster pages, residency limits, and eviction for large CJK and icon fonts.
+- **Language-aware word breaks.** Dictionary segmentation, locale-specific rules, and automatic hyphenation.
+- **Expanded editorial layout.** Balanced columns and flow around rendered-pixel or depth-buffer occlusion.
+- **Vertical writing.** Vertical CJK shaping and paragraph layout.
+- **Live per-glyph transforms.** Deformation that continues to follow retained text updates.
 
 ## Contribute
 
-This repo uses [mise](https://mise.jdx.dev) to make it easier to install and configure the required toolchains.
-Install [Git LFS](https://git-lfs.com/) to download the fixtures and assets, which are stored outside ordinary Git history.
-Trust the checked-in configuration once per fresh clone before asking mise to install them:
+Install [Git LFS](https://git-lfs.com/) for fixtures and assets. [Mise](https://mise.jdx.dev) is optional and installs the required tool versions for you. To set up with mise:
 
 ```sh
-# brew install mise
 git lfs install
 git lfs pull
 mise trust
@@ -183,7 +224,6 @@ The benchmark application lives in [`benches/`](benches/). `pnpm dev` opens its 
 `pnpm scripts list` lists automated benchmarks and fixture generation commands. CI checks out LFS objects before
 building or testing. Asset paths remain ordinary local files after `git lfs pull`.
 
-Mise is optional. With matching Node, pnpm, and Rust tools already on `PATH`, use `pnpm install` and `pnpm dev`
-directly. Repository checks and commit-time documentation digest maintenance use the same pinned Node.js runtime.
+If you already have the pinned Node, pnpm, and Rust versions installed, you can run pnpm commands without `mise exec --`.
 
 `@pmndrs/glyph` is ESM-only and MIT licensed.

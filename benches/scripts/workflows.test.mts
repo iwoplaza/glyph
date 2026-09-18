@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { forwardedWorkflowArguments, workflowCommandArguments } from './workflow-arguments.mts';
 import { hasVitexecFailure } from './workflow-output.mts';
 import { LOOPBACK_HOST, selectLoopbackPort } from './support/loopback-port.mts';
+import { packedArchiveDependency } from './support/packed-archive.mts';
 
 const execute = promisify(execFile);
 const workflowScript = fileURLToPath(new URL('workflows.mts', import.meta.url));
@@ -55,6 +56,14 @@ test('forwards runner options in the position each runner parses', () => {
     '/tmp/profile',
     'probe.ts',
   ]);
+});
+
+test('installs the archive emitted by pnpm pack regardless of package version', () => {
+  assert.equal(packedArchiveDependency(['pmndrs-glyph-0.1.0.tgz']), 'file:archives/pmndrs-glyph-0.1.0.tgz');
+  assert.equal(
+    packedArchiveDependency(['pmndrs-glyph-0.0.0-canary-deadbeef-20260918.tgz']),
+    'file:archives/pmndrs-glyph-0.0.0-canary-deadbeef-20260918.tgz',
+  );
 });
 
 test('selects and releases an available loopback port for private Vite servers', async () => {

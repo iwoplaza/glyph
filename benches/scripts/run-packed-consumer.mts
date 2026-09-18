@@ -5,7 +5,7 @@
   "writes": "Ignored temporary files under benches/.cache, removed before exit."
 } */
 import { execFile as execFileCallback } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -13,6 +13,7 @@ import type { Browser } from 'playwright';
 import { createServer, type ViteDevServer } from 'vite';
 
 import { launchProjectChromium } from './support/project-chromium.mts';
+import { packedArchiveDependency } from './support/packed-archive.mts';
 
 interface PackedResult {
   readonly hash?: string;
@@ -34,7 +35,7 @@ await mkdir(archiveDirectory, { recursive: true });
 let server: ViteDevServer | undefined;
 let browser: Browser | undefined;
 try {
-  await Promise.all([
+  const [glyphArchive] = await Promise.all([
     packPackage('packages/glyph'),
     copyFile(
       join(appDirectory, 'fixtures/fonts/inter-v4.1/Inter-Regular.ttf'),
@@ -44,7 +45,7 @@ try {
   await Promise.all([
     writeFile(
       join(consumerDirectory, 'package.json'),
-      `${JSON.stringify({ private: true, type: 'module', dependencies: { '@pmndrs/glyph': 'file:archives/pmndrs-glyph-0.0.0.tgz' } }, undefined, 2)}\n`,
+      `${JSON.stringify({ private: true, type: 'module', dependencies: { '@pmndrs/glyph': glyphArchive } }, undefined, 2)}\n`,
     ),
     writeFile(
       join(consumerDirectory, 'index.html'),
@@ -130,10 +131,11 @@ try {
   await rm(consumerDirectory, { recursive: true, force: true, maxRetries: 3 });
 }
 
-async function packPackage(packagePath: string): Promise<void> {
+async function packPackage(packagePath: string): Promise<string> {
   const packageDirectory = join(workspaceDirectory, packagePath);
   await execFile('pnpm', ['pack', '--pack-destination', archiveDirectory], {
     cwd: packageDirectory,
     env: { ...process.env, CI: 'true' },
   });
+  return packedArchiveDependency(await readdir(archiveDirectory));
 }

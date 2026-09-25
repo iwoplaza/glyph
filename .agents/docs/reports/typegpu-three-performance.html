@@ -1,0 +1,405 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TypeGPU Bridge Performance</title>
+<style>
+  :root {
+    --ground: #f4f6f5;
+    --surface: #ffffff;
+    --ink: #17201d;
+    --muted: #57635e;
+    --line: #d5dcd8;
+    --accent: #146c7c;
+    --good: #1e7047;
+    --warn: #9a5b00;
+    --code: #e9eeeb;
+    --mono: ui-monospace, 'SFMono-Regular', 'JetBrains Mono', Menlo, Consolas, monospace;
+    --sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    --serif: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      color-scheme: dark;
+      --ground: #111615;
+      --surface: #171e1c;
+      --ink: #e4ebe8;
+      --muted: #9aa8a2;
+      --line: #2e3a36;
+      --accent: #5fbfd0;
+      --good: #6cd29b;
+      --warn: #e2a64e;
+      --code: #0c1110;
+    }
+  }
+  :root[data-theme='dark'] {
+    color-scheme: dark;
+    --ground: #111615;
+    --surface: #171e1c;
+    --ink: #e4ebe8;
+    --muted: #9aa8a2;
+    --line: #2e3a36;
+    --accent: #5fbfd0;
+    --good: #6cd29b;
+    --warn: #e2a64e;
+    --code: #0c1110;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font: 15px/1.6 var(--sans);
+  }
+  main {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding-block: 40px 72px;
+    padding-inline: 20px;
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--serif);
+    font-weight: 600;
+    line-height: 1.15;
+    text-wrap: balance;
+  }
+  h1 {
+    font-size: clamp(2rem, 5vw, 3.1rem);
+    margin: 6px 0 14px;
+    letter-spacing: -0.01em;
+  }
+  h2 {
+    font-size: 1.6rem;
+    margin: 52px 0 12px;
+    padding-top: 18px;
+    border-top: 1px solid var(--line);
+  }
+  h3 {
+    font-size: 1.15rem;
+    margin: 28px 0 8px;
+  }
+  p,
+  li {
+    max-width: 72ch;
+  }
+  a {
+    color: var(--accent);
+  }
+  code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: var(--code);
+    padding: 0.1em 0.35em;
+    border-radius: 4px;
+  }
+  pre {
+    background: var(--code);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 14px 16px;
+    overflow-x: auto;
+    font: 12.5px/1.5 var(--mono);
+  }
+  pre code {
+    background: none;
+    padding: 0;
+  }
+  .eyebrow {
+    font: 600 12px/1 var(--mono);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+  }
+  .lede {
+    font-size: 1.12rem;
+    color: var(--ink);
+    max-width: 70ch;
+  }
+  .meta {
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+  .verdicts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin: 24px 0 8px;
+  }
+  .verdict {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .verdict b {
+    font: 600 1.5rem/1.1 var(--mono);
+    font-variant-numeric: tabular-nums;
+  }
+  .verdict span {
+    color: var(--muted);
+    font-size: 0.88rem;
+  }
+  .table-wrap {
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--surface);
+    margin: 14px 0;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  th,
+  td {
+    padding: 7px 10px;
+    text-align: right;
+    border-bottom: 1px solid var(--line);
+    white-space: nowrap;
+  }
+  th:first-child,
+  td:first-child {
+    text-align: left;
+  }
+  thead th {
+    font: 600 11px/1.3 var(--mono);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  td.num {
+    font-family: var(--mono);
+  }
+  .better {
+    color: var(--good);
+    font-weight: 600;
+  }
+  .worse {
+    color: var(--warn);
+    font-weight: 600;
+  }
+  ol.recs {
+    padding-left: 1.3em;
+    display: grid;
+    gap: 14px;
+  }
+  ol.recs li::marker {
+    font-family: var(--mono);
+    color: var(--accent);
+  }
+  .note {
+    border-left: 3px solid var(--warn);
+    padding: 4px 0 4px 14px;
+    color: var(--ink);
+  }
+</style>
+</head><body>
+<main>
+  <p class="eyebrow">pmndrs/glyph · /three/typegpu · 2026-09-25</p>
+  <h1>TypeGPU bridge performance</h1>
+  <p class="lede">
+    The experimental <code>@pmndrs/glyph/three/typegpu</code> entry now matches the native TSL entry on frame time and
+    builds its materials as fast or faster. Before, it matched on frame time but spent 1.3–4× longer than TSL building
+    each material. The fix is a new way of calling TypeGPU from TSL: each function is compiled once per backend and
+    called with arguments, instead of being recompiled for every material.
+  </p>
+  <p class="meta">
+    Branches <code>claude/glyph-typegpu-perf-mrfm7w</code> in iwoplaza/glyph and iwoplaza/TypeGPU. Measured with the new
+    <code>benchmark:three-shader-performance</code> workflow in Chrome 149 on SwiftShader (no GPU in the container).
+  </p>
+
+  <div class="verdicts">
+    <div class="verdict"><b>0.91–1.00×</b><span>frame time vs TSL, all 8 cells</span><span>before: 0.91–1.10×</span></div><div class="verdict"><b>0.20–1.41×</b><span>warm material build vs TSL</span><span>before: 0.91–4.12×</span></div><div class="verdict"><b>0.52–1.22×</b><span>first material build vs TSL</span><span>before: 1.32–2.97×</span></div><div class="verdict"><b>0.85–1.03×</b><span>first frame vs TSL</span><span>before: 0.90–1.06×</span></div>
+  </div>
+
+  <h2>Results</h2>
+  <p>
+    Median of 6 fresh pages per shader set, 16 measured frames each, pages alternating between the two sets. Ratios are
+    TypeGPU ÷ TSL, so below 1 means the TypeGPU entry is faster. The scene is three overlapping 1,024-pixel paragraphs
+    (8,100 glyphs) per technique.
+  </p>
+  <h3>After: this branch versus native TSL</h3>
+  <div class="table-wrap"><table><thead><tr><th>Backend / technique</th><th>Frame TSL</th><th>Frame TGPU</th><th>Ratio</th><th>First build TSL</th><th>First build TGPU</th><th>Ratio</th><th>Warm build TSL</th><th>Warm build TGPU</th><th>Ratio</th><th>First frame TSL</th><th>First frame TGPU</th><th>Ratio</th></tr></thead><tbody><tr><td>webgpu / bitmap</td><td class="num">310.3</td><td class="num">306.0</td><td class="num ">0.99</td><td class="num">28.1</td><td class="num">24.5</td><td class="num better">0.87</td><td class="num">9.5</td><td class="num">9.8</td><td class="num ">1.03</td><td class="num">636.3</td><td class="num">655.2</td><td class="num ">1.03</td></tr><tr><td>webgpu / mtsdf</td><td class="num">393.4</td><td class="num">392.9</td><td class="num ">1.00</td><td class="num">36.2</td><td class="num">28.1</td><td class="num better">0.77</td><td class="num">23.4</td><td class="num">9.6</td><td class="num better">0.41</td><td class="num">960.4</td><td class="num">977.9</td><td class="num ">1.02</td></tr><tr><td>webgpu / mtsdf-effects</td><td class="num">391.2</td><td class="num">391.6</td><td class="num ">1.00</td><td class="num">38.7</td><td class="num">27.4</td><td class="num better">0.71</td><td class="num">21.0</td><td class="num">8.4</td><td class="num better">0.40</td><td class="num">976.4</td><td class="num">977.3</td><td class="num ">1.00</td></tr><tr><td>webgpu / slug</td><td class="num">639.6</td><td class="num">616.0</td><td class="num ">0.96</td><td class="num">95.3</td><td class="num">49.5</td><td class="num better">0.52</td><td class="num">58.9</td><td class="num">11.5</td><td class="num better">0.20</td><td class="num">1389.4</td><td class="num">1184.5</td><td class="num better">0.85</td></tr><tr><td>webgl2 / bitmap</td><td class="num">316.5</td><td class="num">316.5</td><td class="num ">1.00</td><td class="num">35.7</td><td class="num">43.5</td><td class="num worse">1.22</td><td class="num">9.8</td><td class="num">13.9</td><td class="num worse">1.41</td><td class="num">620.7</td><td class="num">615.8</td><td class="num ">0.99</td></tr><tr><td>webgl2 / mtsdf</td><td class="num">366.6</td><td class="num">349.9</td><td class="num ">0.95</td><td class="num">47.4</td><td class="num">38.2</td><td class="num better">0.81</td><td class="num">23.3</td><td class="num">10.8</td><td class="num better">0.46</td><td class="num">872.0</td><td class="num">862.7</td><td class="num ">0.99</td></tr><tr><td>webgl2 / mtsdf-effects</td><td class="num">366.8</td><td class="num">366.5</td><td class="num ">1.00</td><td class="num">41.5</td><td class="num">39.5</td><td class="num ">0.95</td><td class="num">19.9</td><td class="num">11.3</td><td class="num better">0.57</td><td class="num">878.3</td><td class="num">868.2</td><td class="num ">0.99</td></tr><tr><td>webgl2 / slug</td><td class="num">566.7</td><td class="num">516.5</td><td class="num better">0.91</td><td class="num">110.1</td><td class="num">81.7</td><td class="num better">0.74</td><td class="num">60.5</td><td class="num">12.1</td><td class="num better">0.20</td><td class="num">1135.8</td><td class="num">1035.4</td><td class="num better">0.91</td></tr></tbody></table></div>
+  <h3>Before: the original TypeGPU entry versus native TSL</h3>
+  <p>Same harness, run against the unmodified <code>HEAD</code> with the unpatched <code>@typegpu/three@0.12.1</code>.</p>
+  <div class="table-wrap"><table><thead><tr><th>Backend / technique</th><th>Frame TSL</th><th>Frame TGPU</th><th>Ratio</th><th>First build TSL</th><th>First build TGPU</th><th>Ratio</th><th>Warm build TSL</th><th>Warm build TGPU</th><th>Ratio</th><th>First frame TSL</th><th>First frame TGPU</th><th>Ratio</th></tr></thead><tbody><tr><td>webgpu / bitmap</td><td class="num">301.2</td><td class="num">308.2</td><td class="num ">1.02</td><td class="num">26.6</td><td class="num">79.2</td><td class="num worse">2.97</td><td class="num">9.3</td><td class="num">37.8</td><td class="num worse">4.06</td><td class="num">679.1</td><td class="num">676.7</td><td class="num ">1.00</td></tr><tr><td>webgpu / mtsdf</td><td class="num">397.3</td><td class="num">389.3</td><td class="num ">0.98</td><td class="num">45.3</td><td class="num">119.9</td><td class="num worse">2.64</td><td class="num">22.8</td><td class="num">71.3</td><td class="num worse">3.13</td><td class="num">1066.3</td><td class="num">1082.3</td><td class="num ">1.01</td></tr><tr><td>webgpu / mtsdf-effects</td><td class="num">379.2</td><td class="num">396.2</td><td class="num ">1.04</td><td class="num">42.8</td><td class="num">109.2</td><td class="num worse">2.55</td><td class="num">24.8</td><td class="num">76.8</td><td class="num worse">3.09</td><td class="num">987.0</td><td class="num">1046.1</td><td class="num ">1.06</td></tr><tr><td>webgpu / slug</td><td class="num">649.2</td><td class="num">624.6</td><td class="num ">0.96</td><td class="num">94.4</td><td class="num">144.9</td><td class="num worse">1.53</td><td class="num">66.6</td><td class="num">72.3</td><td class="num worse">1.09</td><td class="num">1329.4</td><td class="num">1338.4</td><td class="num ">1.01</td></tr><tr><td>webgl2 / bitmap</td><td class="num">316.6</td><td class="num">333.0</td><td class="num ">1.05</td><td class="num">32.6</td><td class="num">90.6</td><td class="num worse">2.78</td><td class="num">11.4</td><td class="num">47.1</td><td class="num worse">4.12</td><td class="num">668.1</td><td class="num">654.7</td><td class="num ">0.98</td></tr><tr><td>webgl2 / mtsdf</td><td class="num">333.3</td><td class="num">366.7</td><td class="num worse">1.10</td><td class="num">46.5</td><td class="num">136.4</td><td class="num worse">2.93</td><td class="num">27.9</td><td class="num">61.9</td><td class="num worse">2.22</td><td class="num">849.7</td><td class="num">863.9</td><td class="num ">1.02</td></tr><tr><td>webgl2 / mtsdf-effects</td><td class="num">366.7</td><td class="num">366.4</td><td class="num ">1.00</td><td class="num">45.8</td><td class="num">128.4</td><td class="num worse">2.80</td><td class="num">25.2</td><td class="num">58.5</td><td class="num worse">2.32</td><td class="num">911.5</td><td class="num">883.4</td><td class="num ">0.97</td></tr><tr><td>webgl2 / slug</td><td class="num">566.5</td><td class="num">516.9</td><td class="num better">0.91</td><td class="num">118.1</td><td class="num">156.5</td><td class="num worse">1.32</td><td class="num">65.1</td><td class="num">59.3</td><td class="num better">0.91</td><td class="num">1166.6</td><td class="num">1052.3</td><td class="num better">0.90</td></tr></tbody></table></div>
+  <p>
+    <b>Frame</b> is wall time from submit to a completed one-pixel readback. <b>First build</b> is NodeBuilder time for
+    the page's first materials. <b>Warm build</b> is NodeBuilder time after every text is replaced once the page is warm,
+    which is what an application pays for each new text style or font. <b>First frame</b> includes node building,
+    pipeline creation and uploads.
+  </p>
+  <p>
+    The WebGL2 Bitmap cell is the only one above 1.07 for build time, and it is a roughly 10 ms quantity. A focused
+    12-round rerun of that cell measured 1.06 for the first build and 1.07 for the warm build, which is parity.
+  </p>
+  <p class="note">
+    SwiftShader runs shaders on the CPU, so frame times compare relative shader cost, not hardware budgets. Two runs of
+    identical shaders differed by up to 7% per cell, so frame ratios between 0.93 and 1.07 are parity. Build times are
+    CPU work and do not depend on the rasterizer.
+  </p>
+
+  <h2>Why the original entry was slower</h2>
+  <p>
+    The measurable gap was CPU time spent building materials. Frame times were already within noise of TSL on
+    SwiftShader, whose LLVM backend inlines and deduplicates the repeated pure work described below. Drivers that do
+    less of that would pay for it on the GPU, so the generated code was fixed as well.
+  </p>
+  <h3>Every reuse recomputed the bridge</h3>
+  <p>
+    <code>toTSL</code> returned a plain Three <code>Node</code>. Three only caches a reused result in a temporary for
+    <code>TempNode</code>s, so each use of a bridged value re-emitted every private-variable assignment and called the
+    function again. The original Bitmap fragment shader called the texel-coordinate function twice and assigned its
+    inputs five times:
+  </p>
+  <pre><code>var_1 = NodeBuffer_980.value[ nodeVar4 ];
+var_2 = NodeBuffer_982.value[ nodeVar4 ];
+var_3 = nodeVarying5;
+var_1 = NodeBuffer_980.value[ nodeVar4 ];   // repeated for every use
+…
+nodeVar5 = vec2&lt;i32&gt;( i32( item_1().x ), i32( item_1().y ) );</code></pre>
+  <p>
+    MTSDF was worse: its coverage and composite results were read four times each, and each read ran the whole chain
+    again, including both texture samples.
+  </p>
+  <h3>Every material recompiled TypeGPU</h3>
+  <p>
+    A <code>toTSL</code> closure captures the material's own TSL nodes, so nothing can be shared between materials.
+    Each material ran the TypeGPU compiler at least twice per stage: once in Three's analyze pass (repeated for every
+    usage of the node) and once to generate code, plus one more resolution per bridge-variable assignment. In a warm
+    page the TypeGPU Bitmap material took about 30 ms to build against 8 ms for TSL. The profile showed no single
+    hotspot, only TypeGPU's AST-to-WGSL generator and garbage collection.
+  </p>
+
+  <h2>What changed</h2>
+  <h3>In @typegpu/three (patched here, committed upstream)</h3>
+  <ul>
+    <li>
+      <code>toTSL</code> nodes extend <code>TempNode</code>, analyze their function once per stage, and resolve each
+      bridge-variable name once. Reused results are now computed once, and the per-usage recompilation in the analyze
+      pass is gone.
+    </li>
+    <li>
+      New <code>toTSLFn(fn)</code> wraps a shelled <code>tgpu.fn</code>. It is resolved once per backend into one shared
+      namespace, its declarations become shared code nodes emitted once per shader, and TSL values are passed as
+      ordinary call arguments. Identifiers get a <code>_tsl</code> suffix so they cannot collide with
+      <code>toTSL</code>'s per-shader names.
+    </li>
+    <li>
+      New <code>handle(type)</code> declares a texture that a function reaches through a slot instead of a parameter.
+      Each call binds its own TSL texture, and only the declarations that read a handle are specialized per binding.
+    </li>
+    <li><code>prewarm(backend)</code> resolves a function ahead of the first shader build.</li>
+  </ul>
+  <p>
+    The glyph workspace applies these as <code>patches/@typegpu__three@0.12.1.patch</code>, generated from the upstream
+    source in the TypeGPU branch (commits <code>9f22980</code> and <code>ef18a43</code>, 26 passing tests).
+  </p>
+  <h3>In glyph</h3>
+  <ul>
+    <li>
+      The Bitmap, MTSDF, decoration and Slug adapters call the canonical <code>/shaders/typegpu</code> functions through
+      <code>toTSLFn</code>. The canonical shader code is unchanged.
+    </li>
+    <li>
+      Slug keeps its public texel slots and binds them to three handles. One resolved program is cached per page-width
+      triple, since widths are compiled into the texel addressing.
+    </li>
+    <li>
+      <code>defineThreeConfig</code> schedules an idle-time prewarm: WGSL first when <code>navigator.gpu</code> exists,
+      then GLSL, one technique per idle callback.
+    </li>
+  </ul>
+  <p>
+    Rendered output is unchanged. Lit-pixel counts match the original TypeGPU entry in every cell, the
+    <code>benchmark:v1-bitmap --typegpu</code> proof returns the same pixels on WebGPU and WebGL2, and the glyph package
+    test suite passes.
+  </p>
+
+  <h2>What TypeGPU could improve</h2>
+  <p>Ordered by how much each would have saved this integration.</p>
+  <ol class="recs">
+    <li>
+      <b>Make a parameterized bridge the default way to call TypeGPU from TSL.</b> <code>toTSL</code>'s closure model
+      forces a full recompilation per material, because the captured nodes differ. <code>toTSLFn</code> shows the
+      alternative: compile once per program, pass values as arguments, cache results like any TSL node. After adopting
+      it, glyph's warm material builds became about 2–5× faster than native TSL for MTSDF and Slug. Upstreaming it (the
+      TypeGPU branch is ready for review) is the single largest improvement.
+    </li>
+    <li>
+      <b>Precompile at build time.</b> The first TypeGPU resolution in a page is dominated by cold JIT: about 50 ms for
+      MTSDF's six small functions on this machine. <code>unplugin-typegpu</code> already sees every
+      <code>'use gpu'</code> function, so it could emit resolved WGSL and GLSL for shelled functions whose externals are
+      static and let <code>toTSLFn</code> skip the runtime compiler. Glyph currently hides this cost with an idle-time
+      prewarm, which only works when the application has idle time before its first frame.
+    </li>
+    <li>
+      <b>Report declaration dependencies.</b> With a shared namespace, <code>resolveWithContext</code> returns only newly
+      emitted declarations and no edges between them. The bridge has to find each declaration's dependencies by
+      scanning its code for known identifiers. A <code>dependencies</code> list on <code>ResolvedDeclaration</code>
+      would make this exact.
+    </li>
+    <li>
+      <b>Let namespaces reserve names or add a prefix.</b> Keeping bridge names away from <code>toTSL</code>'s and
+      Three's names currently takes a regex rename of every declaration. A <code>namespace({ reserved, prefix })</code>
+      option, or public access to the taken-identifier set, would remove it.
+    </li>
+    <li>
+      <b>Make resources bindable per call.</b> WGSL allows textures as function parameters, but a slot cannot close over
+      a parameter, so Slug's slot-based loaders needed the <code>handle()</code> placeholder and per-binding
+      specialization. First-class resource slots, bound at the call site, would let hosts keep slot-based APIs without
+      that machinery.
+    </li>
+    <li>
+      <b>Fix two @typegpu/gl gaps.</b> GLSL struct declarations come back from <code>resolveWithContext</code> without a
+      <code>name</code>, although WGSL ones have it. A <code>texture_2d_array</code> function parameter emits invalid
+      GLSL: the WGSL type name <code>texture_2d_array&lt;f32&gt;</code> and a <code>texelFetch</code> with a separate
+      layer argument.
+    </li>
+    <li>
+      <b>Make <code>glOptions()</code> reusable or fail clearly.</b> Reusing one options object for two resolutions
+      throws "Cannot initialize shader generators twice", which is easy to hit when resolving an entry and then its
+      identifier.
+    </li>
+    <li>
+      <b>Allow struct returns across the bridge.</b> <code>toTSLFn</code> only returns scalars, vectors and matrices, so
+      glyph wraps struct-taking canonical functions (<code>msdfCoverageFromDistances</code>,
+      <code>msdfComposite</code>, <code>slugRenderWithOptions</code>) in flat-parameter shells. Mapping TypeGPU structs
+      to TSL structs would remove these wrappers.
+    </li>
+    <li>
+      <b>Speed up the code generator.</b> Warm resolution still allocates heavily; garbage collection took about 29 ms
+      of one warm rebuild profile. Reducing snippet and string churn in the generator would help every host, not only
+      Three.
+    </li>
+  </ol>
+
+  <h2>Open items</h2>
+  <ul>
+    <li>
+      <b>Publishing is blocked on upstream.</b> <code>toTSLFn</code>, <code>handle</code> and <code>prewarm</code> are
+      not in a published <code>@typegpu/three</code> yet. The patch only applies inside this workspace, so the peer
+      floor must be raised to the release that ships them before <code>/three/typegpu</code> is published.
+    </li>
+    <li>
+      <b>Bitmap sampling differs between entries.</b> Native TSL samples the Bitmap page through a linear sampler, while
+      the TypeGPU functions fetch the nearest texel. This predates the change and explains the different lit-pixel
+      counts; which one is intended is a separate decision.
+    </li>
+    <li>
+      <b>Hardware GPU numbers are still needed.</b> The presentation workload matrix could not run in this container:
+      SwiftShader drops its instance under that workload for native TSL as well. Frame-time parity should be confirmed
+      on real hardware with <code>benchmark:three-shader-performance</code>.
+    </li>
+  </ul>
+</main>
+</body></html>

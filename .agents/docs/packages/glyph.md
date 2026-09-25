@@ -5,7 +5,7 @@ description: Implements portable font loading, retained Rust shaping and layout,
 resource: ../../../packages/glyph
 workspace_package: '@pmndrs/glyph'
 documentation_type: reference
-source_digest: 'sha256:48d7c834b3535286bbe36038c945134846c0cb3771f7380160f298746d669c54'
+source_digest: 'sha256:ddf905565456ad7e30682dc459f4606db79d2b5d7c53151426ad6586e0f99e3b'
 tags: [package, public-api, rust, wasm, threejs, typography]
 sources:
   - id: manifest
@@ -243,10 +243,21 @@ weighted blend, and row-based vertex dilation are expressed once. A vertical ban
 transposed frame with the opposite winding sense, so both axes share one curve evaluator and quadratic solver.
 
 The neighboring TypeGPU modules own page texture reads, grid addressing, band traversal, and the sorted-reference
-terminator. The experimental `/three/typegpu` host supplies textures and node-valued glyph fields through `@typegpu/three`, while retaining
-native TSL only for the writable inter-stage varying and the matrix-compatible dilation path. A device-free package test
-compiles the staged Slug graph through Three's WGSL and GLSL node builders and guards unique shared-function declarations,
-both bounded band loops and terminators, and cross-backend builtin compatibility.
+terminator. The experimental `/three/typegpu` host calls those functions through `@typegpu/three`'s `toTSLFn`: each
+canonical function is wrapped once in a typed `tgpu.fn` shell, resolved once per backend into a shared namespace, and
+called with TSL arguments, so a later material costs only TSL node construction and a reused result is computed once.
+Slug keeps its public texel slots; the host binds them to `handle()` texture placeholders that each call binds to its
+page, and caches one resolved program per page-width triple. Native TSL remains only for the writable inter-stage
+varying. `defineThreeConfig` schedules an idle-time prewarm of the likely backend so the one-time TypeGPU compilation
+overlaps font loading instead of the first frame (D-371). A device-free package test compiles the staged Slug graph
+through Three's WGSL and GLSL node builders and guards unique shared-function declarations, both bounded band loops and
+terminators, and cross-backend builtin compatibility.
+
+`toTSLFn`, `handle()`, and `prewarm()` are not in a published `@typegpu/three` release yet. The workspace applies them
+as `patches/@typegpu__three@0.12.1.patch`, which mirrors the upstream TypeGPU change, so publishing `/three/typegpu`
+requires that release and a raised peer floor. `benchmark:three-shader-performance` compares both Three configs on one
+fixed scene; the [TypeGPU bridge performance report](../reports/typegpu-three-performance.html) records the results
+and the recommended TypeGPU improvements.
 
 `typegpu`, `@typegpu/three`, and `@typegpu/gl` are optional peers because their runtime identities must be shared with the
 consumer, like Three.js and React. Stable `/three` and `/shaders/tsl` consumers do not load these bridge runtimes, and

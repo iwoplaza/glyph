@@ -1,5 +1,15 @@
 # pmndrs/glyph documentation update log
 
+## 2026-09-25
+
+- **Brought `/three/typegpu` to TSL performance** — The experimental entry now calls the canonical TypeGPU functions
+  through a parameterized `@typegpu/three` bridge (`toTSLFn`, `handle`, `prewarm`) that resolves each function once per
+  backend, applied as a workspace patch mirroring the upstream TypeGPU change. The new
+  `benchmark:three-shader-performance` workflow measures frame time at 0.91–1.00× native TSL and removes the previous
+  1.3–4.1× material-build penalty; output pixels are unchanged. Publication waits on the upstream release. See D-371
+  in [the decision register](planning/decision-register.md) and the
+  [TypeGPU bridge performance report](reports/typegpu-three-performance.html).
+
 ## 2026-09-18
 
 - **Added tagged stable publishing alongside canaries** — Extended the existing npm publishing workflow so matching

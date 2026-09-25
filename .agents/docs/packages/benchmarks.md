@@ -5,7 +5,7 @@ description: Provides the shared interactive and automated benchmark product sur
 resource: ../../../benches
 workspace_package: '@pmndrs/glyph-benchmarks'
 documentation_type: reference
-source_digest: 'sha256:f9e79c1fe6223dc7a1b0926c068e9f6fb2578b820e19f5b2bb7a57443123d947'
+source_digest: 'sha256:c7f43d1b808584804a4d95bf540e4dd89f445d576ce60710b28bdfe4d26b00da'
 tags: [package, benchmarks, react, vite, product-e2e]
 sources:
   - id: manifest
@@ -748,6 +748,16 @@ publication, so equivalent-width no-ops cannot be misreported as reflow speed. C
 the LayoutRun placement candidate preserves the baseline primitive and draw topology.
 
 The `benchmark:v1-bitmap` workflow accepts `--typegpu` to run its WebGPU and WebGL2 proofs with `/three/typegpu`. Benchmark URLs may select that config with `shaders=typegpu`; the default remains native TSL through `/three`.
+
+`benchmark:three-shader-performance` compares the two Three shader sets on one fixed dense scene: three overlapping
+1,024-pixel paragraphs (8,100 glyphs) per Bitmap, MTSDF, MTSDF-with-effects, and Slug, on WebGPU and WebGL2. Every
+round opens a fresh page per shader set in alternating order and records NodeBuilder time for the first materials, a
+second fully replaced text generation once the page is warm, first-frame wall time, per-frame wall time to a completed
+one-pixel readback, WebGPU render-pass timestamps, generated source size, and lit pixels. `--dump-shaders` writes the
+generated fragment shaders and `--cpu-profile` writes Chrome CPU profiles, including one scoped to the warm rebuild.
+In a container without a GPU, Chromium runs WebGPU on SwiftShader, so frame and timestamp values measure relative
+shader cost on the CPU rasterizer rather than hardware budgets; repeated runs of identical shaders vary by about 7%.
+See the [TypeGPU bridge performance report](../reports/typegpu-three-performance.html).
 
 `benchmark:unit` runs Vitest without rebuilding runtime packages and accepts test-file filters. Package-size evidence gates
 the three application-facing renderer boundaries rather than maintaining a second matrix for their shader modules:

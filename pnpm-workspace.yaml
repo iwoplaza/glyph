@@ -36,3 +36,6 @@ allowBuilds:
 
 overrides:
   brace-expansion@>=4.0.0 <5.0.9: ^5.0.9
+
+patchedDependencies:
+  '@typegpu/three@0.12.1': patches/@typegpu__three@0.12.1.patch

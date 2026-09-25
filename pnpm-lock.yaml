@@ -34,6 +34,9 @@ catalogs:
 overrides:
   brace-expansion@>=4.0.0 <5.0.9: ^5.0.9
 
+patchedDependencies:
+  '@typegpu/three@0.12.1': e2fb03d23d34105a571514d7caeb2bd3c3843933564af350f440d512798c24a7
+
 importers:
 
   .:
@@ -214,7 +217,7 @@ importers:
         version: 0.12.4(typegpu@0.12.5)
       '@typegpu/three':
         specifier: catalog:renderer
-        version: 0.12.1(@typegpu/gl@0.12.4(typegpu@0.12.5))(three@0.185.1)(typegpu@0.12.5)
+        version: 0.12.1(patch_hash=e2fb03d23d34105a571514d7caeb2bd3c3843933564af350f440d512798c24a7)(@typegpu/gl@0.12.4(typegpu@0.12.5))(three@0.185.1)(typegpu@0.12.5)
       class-variance-authority:
         specifier: 0.7.1
         version: 0.7.1
@@ -360,7 +363,7 @@ importers:
         version: 0.12.4(typegpu@0.12.5)
       '@typegpu/three':
         specifier: catalog:renderer
-        version: 0.12.1(@typegpu/gl@0.12.4(typegpu@0.12.5))(three@0.185.1)(typegpu@0.12.5)
+        version: 0.12.1(patch_hash=e2fb03d23d34105a571514d7caeb2bd3c3843933564af350f440d512798c24a7)(@typegpu/gl@0.12.4(typegpu@0.12.5))(three@0.185.1)(typegpu@0.12.5)
       '@types/node':
         specifier: 24.13.3
         version: 24.13.3
@@ -5753,7 +5756,7 @@ snapshots:
       tinyest: 0.3.3
       typegpu: 0.12.5
 
-  '@typegpu/three@0.12.1(@typegpu/gl@0.12.4(typegpu@0.12.5))(three@0.185.1)(typegpu@0.12.5)':
+  '@typegpu/three@0.12.1(patch_hash=e2fb03d23d34105a571514d7caeb2bd3c3843933564af350f440d512798c24a7)(@typegpu/gl@0.12.4(typegpu@0.12.5))(three@0.185.1)(typegpu@0.12.5)':
     dependencies:
       '@typegpu/gl': 0.12.4(typegpu@0.12.5)
       three: 0.185.1

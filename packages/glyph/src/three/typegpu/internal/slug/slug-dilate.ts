@@ -1,5 +1,5 @@
 import * as t3 from '@typegpu/three';
-import { d } from 'typegpu';
+import tgpu, { d } from 'typegpu';
 import type { Node } from 'three/webgpu';
 
 import {
@@ -10,6 +10,19 @@ import {
 export interface SlugDilationNodes {
   readonly position: Node<'vec2'>;
   readonly textureCoordinate: Node<'vec2'>;
+}
+
+const dilateRows = /* @__PURE__ */ t3.toTSLFn(
+  /* @__PURE__ */ tgpu.fn([d.vec2f, d.vec2f, d.vec2f, d.f32, d.vec4f, d.vec4f, d.vec4f, d.vec2f], d.vec4f)(dilate),
+);
+const dilateWithMatrix = /* @__PURE__ */ t3.toTSLFn(
+  /* @__PURE__ */ tgpu.fn([d.vec2f, d.vec2f, d.vec2f, d.f32, d.mat4x4f, d.vec2f], d.vec4f)(dilateMatrix),
+);
+
+/** Resolve both dilation bridge functions for one backend before its first material is built. */
+export function prewarmSlugDilation(backend: 'webgpu' | 'webgl'): void {
+  dilateRows.prewarm(backend);
+  dilateWithMatrix.prewarm(backend);
 }
 
 export function slugDilate(
@@ -23,19 +36,16 @@ export function slugDilate(
   viewport: Node<'vec2'>,
 ): SlugDilationNodes {
   return splitDilation(
-    t3.toTSL(() => {
-      'use gpu';
-      return dilate(
-        t3.fromTSL(position, d.vec2f).$,
-        t3.fromTSL(outwardNormal, d.vec2f).$,
-        t3.fromTSL(textureCoordinate, d.vec2f).$,
-        t3.fromTSL(inverseScale, d.f32).$,
-        t3.fromTSL(mvpRow0, d.vec4f).$,
-        t3.fromTSL(mvpRow1, d.vec4f).$,
-        t3.fromTSL(mvpRow3, d.vec4f).$,
-        t3.fromTSL(viewport, d.vec2f).$,
-      );
-    }) as Node<'vec4'>,
+    dilateRows(
+      position,
+      outwardNormal,
+      textureCoordinate,
+      inverseScale,
+      mvpRow0,
+      mvpRow1,
+      mvpRow3,
+      viewport,
+    ) as Node<'vec4'>,
   );
 }
 
@@ -48,17 +58,14 @@ export function slugDilateMatrix(
   viewport: Node<'vec2'>,
 ): SlugDilationNodes {
   return splitDilation(
-    t3.toTSL(() => {
-      'use gpu';
-      return dilateMatrix(
-        t3.fromTSL(position, d.vec2f).$,
-        t3.fromTSL(outwardNormal, d.vec2f).$,
-        t3.fromTSL(textureCoordinate, d.vec2f).$,
-        t3.fromTSL(inverseScale, d.f32).$,
-        t3.fromTSL(modelViewProjection, d.mat4x4f).$,
-        t3.fromTSL(viewport, d.vec2f).$,
-      );
-    }) as Node<'vec4'>,
+    dilateWithMatrix(
+      position,
+      outwardNormal,
+      textureCoordinate,
+      inverseScale,
+      modelViewProjection,
+      viewport,
+    ) as Node<'vec4'>,
   );
 }
 

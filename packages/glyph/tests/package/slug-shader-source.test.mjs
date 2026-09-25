@@ -53,7 +53,7 @@ test('the Slug material compiles on both backends and calls the portable core on
       const evaluator = stages.fragment;
       assert.match(
         evaluator,
-        /if\s*\(+maximum\s*<\s*-0\.5f?\)+\s*\{\s*return[^;]+;\s*\}[\s\S]*?calcRootCode\(/,
+        /if\s*\(+maximum\s*<\s*-0\.5f?\)+\s*\{\s*return[^;]+;\s*\}[\s\S]*?calcRootCode_tsl\(/,
         `${backend} must reject a terminating curve before evaluating root eligibility or solving roots`,
       );
     }
@@ -129,7 +129,8 @@ function withSlugFillMesh(body) {
 }
 
 function declarationCount(source, name, backend) {
-  const declaration = backend === 'webgpu' ? `^fn ${name}\\(` : `^\\w+ ${name}\\(`;
+  // Functions called through `@typegpu/three`'s toTSLFn share one namespace and carry its `_tsl` suffix.
+  const declaration = backend === 'webgpu' ? `^fn ${name}_tsl\\(` : `^\\w+ ${name}_tsl\\(`;
   return (source.match(new RegExp(declaration, 'gm')) ?? []).length;
 }
 

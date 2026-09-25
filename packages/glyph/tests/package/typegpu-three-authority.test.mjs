@@ -88,7 +88,7 @@ test('the MTSDF Three adapter compiles the canonical TypeGPU functions on both b
       ]) {
         assert.equal(declarationCount(`${source.vertex}\n${source.fragment}`, name, backend), 1);
       }
-      assert.equal((source.fragment.match(/\bmsdfDistances\(/g) ?? []).length, 2, 'reconstruct distances once');
+      assert.equal((source.fragment.match(/\bmsdfDistances_tsl\(/g) ?? []).length, 2, 'reconstruct distances once');
       const textureCall =
         backend === 'webgpu'
           ? /\b(?:textureSample\w*|textureLoad)\s*\(/g
@@ -129,7 +129,8 @@ function withMaterial(output, body) {
 }
 
 function declarationCount(source, name, backend) {
-  const declaration = backend === 'webgpu' ? `^fn ${name}\\(` : `^\\w+ ${name}\\(`;
+  // Functions called through `@typegpu/three`'s toTSLFn share one namespace and carry its `_tsl` suffix.
+  const declaration = backend === 'webgpu' ? `^fn ${name}_tsl\\(` : `^\\w+ ${name}_tsl\\(`;
   return (source.match(new RegExp(declaration, 'gm')) ?? []).length;
 }
 
@@ -157,7 +158,7 @@ test('stable and experimental handles retain independent shader selection in one
   });
   assert.equal(draws.length, 2);
   const programs = draws.map((mesh) => compileNodeMaterialBackends(mesh, { scene }).webgpu.vertex);
-  assert.equal(programs.filter((source) => /fn bitmapQuadPosition\(/.test(source)).length, 1);
+  assert.equal(programs.filter((source) => /fn bitmapQuadPosition_tsl\(/.test(source)).length, 1);
   experimental.dispose();
   stableText.text = 'Still stable';
   scene.updateMatrixWorld();
@@ -167,7 +168,10 @@ test('stable and experimental handles retain independent shader selection in one
     if (object.isMesh) remaining.push(object);
   });
   assert.equal(remaining.length, 1);
-  assert.doesNotMatch(compileNodeMaterialBackends(remaining[0], { scene }).webgpu.vertex, /fn bitmapQuadPosition\(/);
+  assert.doesNotMatch(
+    compileNodeMaterialBackends(remaining[0], { scene }).webgpu.vertex,
+    /fn bitmapQuadPosition_tsl\(/,
+  );
 });
 
 test('stable and experimental Three configs share the custom material override contract', async (t) => {

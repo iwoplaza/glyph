@@ -3,11 +3,7 @@ import type { DataTexture, Node } from 'three/webgpu';
 import * as t3 from '@typegpu/three';
 import tgpu, { d, std } from 'typegpu';
 
-import {
-  SlugShaderGlyph,
-  slugRenderWithOptions,
-  type SlugShaderPage,
-} from '../../../shaders/typegpu/slug/slug-render.js';
+import { SlugShaderGlyph, slugRenderWithOptions } from '../../../shaders/typegpu/slug/slug-render.js';
 import {
   slugCurveTexelSlot,
   slugCurveWidthAccessor,
@@ -16,7 +12,7 @@ import {
   slugReferenceTexelSlot,
   slugReferenceWidthAccessor,
 } from '../../../shaders/typegpu/slug/slug-texture.js';
-import { slugDilate, slugDilateMatrix } from './slug/slug-dilate.js';
+import { prewarmSlugDilation, slugDilate, slugDilateMatrix } from './slug/slug-dilate.js';
 
 /**
  * One glyph instance's canonical Slug fields, already resolved to nodes. The address and count fields locate the
@@ -156,35 +152,25 @@ export function slugShader(instance: TslSlugInstanceNodes, resources: TslSlugSha
     renderCoordinate.assign(dilated.textureCoordinate);
     return TSL.vec3(dilated.position.x, dilated.position.y, 0);
   })();
-  const page = shaderPage(resources.page);
-  const specializedSlugRender = tgpu
-    .fn(slugRenderWithOptions)
-    .with(slugCurveWidthAccessor, d.u32(page.curveWidth))
-    .with(slugHeaderWidthAccessor, d.u32(page.headerWidth))
-    .with(slugReferenceWidthAccessor, d.u32(page.referenceWidth))
-    .with(slugCurveTexelSlot, page.loadCurve)
-    .with(slugHeaderTexelSlot, page.loadHeader)
-    .with(slugReferenceTexelSlot, page.loadReference);
   const rule = renderOptions(resources.fillRule);
-  const coverage = t3.toTSL(() => {
-    'use gpu';
-    return specializedSlugRender(
-      SlugShaderGlyph({
-        curveBaseTexel: t3.fromTSL(instance.curveBaseTexel, d.u32).$,
-        horizontalHeaderBase: t3.fromTSL(instance.horizontalHeaderBase, d.u32).$,
-        verticalHeaderBase: t3.fromTSL(instance.verticalHeaderBase, d.u32).$,
-        referenceBase: t3.fromTSL(instance.referenceBase, d.u32).$,
-        horizontalBandCount: t3.fromTSL(instance.horizontalBandCount, d.u32).$,
-        verticalBandCount: t3.fromTSL(instance.verticalBandCount, d.u32).$,
-        bandTransform: t3.fromTSL(instance.bandTransform, d.vec4f).$,
-      }),
-      t3.fromTSL(renderCoordinate, d.vec2f).$,
-      t3.fromTSL(rule.evenOdd, d.bool).$,
-      t3.fromTSL(rule.weightBoost, d.bool).$,
-      t3.fromTSL(rule.stemDarken, d.f32).$,
-      t3.fromTSL(rule.thicken, d.f32).$,
-    );
-  }) as Node<'float'>;
+  const page = resources.page;
+  const coverage = coverageFor(page)(
+    instance.curveBaseTexel,
+    instance.horizontalHeaderBase,
+    instance.verticalHeaderBase,
+    instance.referenceBase,
+    instance.horizontalBandCount,
+    instance.verticalBandCount,
+    instance.bandTransform,
+    renderCoordinate,
+    rule.evenOdd,
+    rule.weightBoost,
+    rule.stemDarken,
+    rule.thicken,
+    TSL.texture(page.curveTexture),
+    TSL.texture(page.headerTexture),
+    TSL.texture(page.referenceTexture),
+  ) as Node<'float'>;
 
   return {
     position,
@@ -204,25 +190,106 @@ function renderOptions(rule: TslSlugFillRule | undefined): Required<TslSlugFillR
   };
 }
 
-function shaderPage(resources: TslSlugPageResources): SlugShaderPage {
-  const curveTexture = t3.fromTSL(resources.curveTexture, d.texture2d(d.f32));
-  const headerTexture = t3.fromTSL(resources.headerTexture, d.texture2d(d.u32));
-  const referenceTexture = t3.fromTSL(resources.referenceTexture, d.texture2d(d.u32));
-  return {
-    curveWidth: resources.curveWidth,
-    headerWidth: resources.headerWidth,
-    referenceWidth: resources.referenceWidth,
-    loadCurve: (coords: d.v2i) => {
-      'use gpu';
-      return std.textureLoad(curveTexture.$, coords, 0);
-    },
-    loadHeader: (coords: d.v2i) => {
-      'use gpu';
-      return std.textureLoad(headerTexture.$, coords, 0);
-    },
-    loadReference: (coords: d.v2i) => {
-      'use gpu';
-      return std.textureLoad(referenceTexture.$, coords, 0);
-    },
-  };
+/**
+ * The page textures are per material, so the canonical texel slots read them through `@typegpu/three` handles that
+ * every call binds to its own TSL textures. The slot and width bindings are resolved once per backend and page shape.
+ */
+const curveTexture = /* @__PURE__ */ t3.handle(/* @__PURE__ */ d.texture2d(d.f32));
+const headerTexture = /* @__PURE__ */ t3.handle(/* @__PURE__ */ d.texture2d(d.u32));
+const referenceTexture = /* @__PURE__ */ t3.handle(/* @__PURE__ */ d.texture2d(d.u32));
+
+function loadCurve(coords: d.v2i): d.v4f {
+  'use gpu';
+  return std.textureLoad(curveTexture.$, coords, 0);
+}
+
+function loadHeader(coords: d.v2i): d.v4u {
+  'use gpu';
+  return std.textureLoad(headerTexture.$, coords, 0);
+}
+
+function loadReference(coords: d.v2i): d.v4u {
+  'use gpu';
+  return std.textureLoad(referenceTexture.$, coords, 0);
+}
+
+const slugCoverage = /* @__PURE__ */ tgpu.fn(
+  [d.u32, d.u32, d.u32, d.u32, d.u32, d.u32, d.vec4f, d.vec2f, d.bool, d.bool, d.f32, d.f32],
+  d.f32,
+)((
+  curveBaseTexel,
+  horizontalHeaderBase,
+  verticalHeaderBase,
+  referenceBase,
+  horizontalBandCount,
+  verticalBandCount,
+  bandTransform,
+  renderCoordinate,
+  evenOdd,
+  weightBoost,
+  stemDarken,
+  thicken,
+) => {
+  'use gpu';
+  return slugRenderWithOptions(
+    SlugShaderGlyph({
+      curveBaseTexel,
+      horizontalHeaderBase,
+      verticalHeaderBase,
+      referenceBase,
+      horizontalBandCount,
+      verticalBandCount,
+      bandTransform,
+    }),
+    renderCoordinate,
+    evenOdd,
+    weightBoost,
+    stemDarken,
+    thicken,
+  );
+});
+
+type SlugCoverageCall = ReturnType<typeof specializeCoverage>;
+const coverageByPageShape = new Map<string, SlugCoverageCall>();
+
+function specializeCoverage(curveWidth: number, headerWidth: number, referenceWidth: number) {
+  return t3.toTSLFn(
+    slugCoverage
+      .with(slugCurveWidthAccessor, d.u32(curveWidth))
+      .with(slugHeaderWidthAccessor, d.u32(headerWidth))
+      .with(slugReferenceWidthAccessor, d.u32(referenceWidth))
+      .with(slugCurveTexelSlot, loadCurve)
+      .with(slugHeaderTexelSlot, loadHeader)
+      .with(slugReferenceTexelSlot, loadReference),
+    [curveTexture, headerTexture, referenceTexture],
+  );
+}
+
+/** Row widths are compiled into the texel addressing, so one resolved program serves every page of that shape. */
+function coverageFor(
+  page: Pick<TslSlugPageResources, 'curveWidth' | 'headerWidth' | 'referenceWidth'>,
+): SlugCoverageCall {
+  const key = `${String(page.curveWidth)}:${String(page.headerWidth)}:${String(page.referenceWidth)}`;
+  let coverage = coverageByPageShape.get(key);
+  if (coverage === undefined) {
+    coverage = specializeCoverage(page.curveWidth, page.headerWidth, page.referenceWidth);
+    coverageByPageShape.set(key, coverage);
+  }
+  return coverage;
+}
+
+/** The Slug baker's default row width for all three page textures. */
+const DEFAULT_SLUG_PAGE_WIDTH = 4096;
+
+/**
+ * Resolve the dilation and the default-shaped coverage program for one backend before the first Slug material is
+ * built. Pages of another shape still resolve on first use and reuse every width-independent helper.
+ */
+export function prewarmSlugShader(backend: 'webgpu' | 'webgl'): void {
+  prewarmSlugDilation(backend);
+  coverageFor({
+    curveWidth: DEFAULT_SLUG_PAGE_WIDTH,
+    headerWidth: DEFAULT_SLUG_PAGE_WIDTH,
+    referenceWidth: DEFAULT_SLUG_PAGE_WIDTH,
+  }).prewarm(backend);
 }

@@ -1,5 +1,5 @@
 import * as t3 from '@typegpu/three';
-import { d } from 'typegpu';
+import tgpu, { d } from 'typegpu';
 import * as TSL from 'three/tsl';
 import type { Node, Texture } from 'three/webgpu';
 
@@ -13,7 +13,7 @@ import {
 } from '../../../shaders/typegpu/msdf-shader.js';
 import { msdfCoverageFromDistances, msdfDistances } from '../../../shaders/typegpu/msdf/distance.js';
 import type { TslMsdfShaderOutput } from '../../../shaders/tsl/msdf-shader.js';
-import { decorationPaint } from '../../../shaders/typegpu/decoration-shader.js';
+import { packedPaint } from './decoration-shader.js';
 
 export type { TslMsdfShaderOutput } from '../../../shaders/tsl/msdf-shader.js';
 
@@ -38,84 +38,101 @@ export interface TslMsdfShaderResources {
   readonly pixelRange: number;
 }
 
-/** Adapt Three texture sampling and nodes to the canonical TypeGPU MTSDF algorithm. */
+const quadPosition = /* @__PURE__ */ t3.toTSLFn(
+  /* @__PURE__ */ tgpu.fn([d.vec2f, d.vec2f, d.vec3f], d.vec3f)(msdfPosition),
+);
+const atlasCoordinateOf = /* @__PURE__ */ t3.toTSLFn(
+  /* @__PURE__ */ tgpu.fn([d.vec2f, d.vec2f, d.vec2f], d.vec2f)(msdfAtlasCoordinate),
+);
+const clampedCoordinates = /* @__PURE__ */ t3.toTSLFn(
+  /* @__PURE__ */ tgpu.fn([d.vec2f, d.vec2f, d.vec4f, d.vec2f], d.vec4f)(msdfClampedCoordinates),
+);
+const distancesOf = /* @__PURE__ */ t3.toTSLFn(
+  /* @__PURE__ */ tgpu.fn([d.vec4f, d.vec2f, d.vec2f, d.f32], d.vec3f)(msdfDistances),
+);
+const coverageOf = /* @__PURE__ */ t3.toTSLFn(
+  /* @__PURE__ */ tgpu
+    .fn(
+      [d.vec2f, d.vec2f, d.vec4f, d.vec2f, d.f32, d.vec4f, d.vec4f, d.f32, d.vec3f],
+      d.vec3f,
+    )(
+      (
+        atlasCoordinate,
+        shadowCoordinate,
+        uvBounds,
+        atlasSize,
+        pixelRange,
+        baseSample,
+        shadowSample,
+        outlineWidth,
+        distances,
+      ) => {
+        'use gpu';
+        return msdfCoverageFromDistances(
+          MsdfCoverageInput({
+            atlasCoordinate,
+            shadowCoordinate,
+            uvBounds,
+            atlasSize,
+            pixelRange,
+            baseSample,
+            shadowSample,
+            outlineWidth,
+          }),
+          distances,
+        );
+      },
+    )
+    .$name('msdfBridgeCoverage'),
+);
+const composite = /* @__PURE__ */ t3.toTSLFn(
+  /* @__PURE__ */ tgpu
+    .fn(
+      [d.vec3f, d.vec4f, d.vec4f, d.vec4f],
+      d.vec4f,
+    )((coverage, fillColor, outlineColor, shadowColor) => {
+      'use gpu';
+      return msdfComposite(MsdfCompositeInput({ coverage, fillColor, outlineColor, shadowColor }));
+    })
+    .$name('msdfBridgeComposite'),
+);
+
+/** Resolve every MTSDF bridge function for one backend before its first material is built. */
+export function prewarmMsdfShader(backend: 'webgpu' | 'webgl'): void {
+  for (const fn of [quadPosition, atlasCoordinateOf, clampedCoordinates, distancesOf, coverageOf, composite]) {
+    fn.prewarm(backend);
+  }
+}
+
+/**
+ * Adapt Three texture sampling and nodes to the canonical TypeGPU MTSDF algorithm. Each function is resolved once
+ * per backend and called with TSL arguments, so realizing another material costs only TSL node construction.
+ */
 export function msdfShader(instance: TslMsdfInstanceNodes, resources: TslMsdfShaderResources): TslMsdfShaderOutput {
-  const outlineColor = t3.toTSL(() => {
-    'use gpu';
-    return decorationPaint(d.vec2u(t3.fromTSL(instance.effectColor.x, d.u32).$, 0));
-  }) as Node<'vec4'>;
-  const shadowColor = t3.toTSL(() => {
-    'use gpu';
-    return decorationPaint(d.vec2u(t3.fromTSL(instance.effectColor.y, d.u32).$, 0));
-  }) as Node<'vec4'>;
-  const position = t3.toTSL(() => {
-    'use gpu';
-    return msdfPosition(
-      t3.fromTSL(instance.origin, d.vec2f).$,
-      t3.fromTSL(instance.size, d.vec2f).$,
-      t3.positionLocal.$,
-    );
-  }) as Node<'vec3'>;
-  const atlasUv = t3.toTSL(() => {
-    'use gpu';
-    return msdfAtlasCoordinate(
-      t3.fromTSL(instance.uvOrigin, d.vec2f).$,
-      t3.fromTSL(instance.uvSize, d.vec2f).$,
-      t3.uv().$,
-    );
-  }) as Node<'vec2'>;
+  const outlineColor = packedPaint(TSL.uvec2(instance.effectColor.x, TSL.uint(0)));
+  const shadowColor = packedPaint(TSL.uvec2(instance.effectColor.y, TSL.uint(0)));
+  const position = quadPosition(instance.origin, instance.size, TSL.positionLocal) as Node<'vec3'>;
+  const atlasUv = atlasCoordinateOf(instance.uvOrigin, instance.uvSize, TSL.uv()) as Node<'vec2'>;
   const shadowUv = TSL.sub(atlasUv, instance.shadowOffset);
   const atlasSize = TSL.vec2(resources.atlasWidth, resources.atlasHeight);
-  const clamped = t3.toTSL(() => {
-    'use gpu';
-    return msdfClampedCoordinates(
-      t3.fromTSL(atlasUv, d.vec2f).$,
-      t3.fromTSL(shadowUv, d.vec2f).$,
-      t3.fromTSL(instance.uvBounds, d.vec4f).$,
-      d.vec2f(resources.atlasWidth, resources.atlasHeight),
-    );
-  }) as Node<'vec4'>;
+  const pixelRange = TSL.float(resources.pixelRange);
+  const clamped = clampedCoordinates(atlasUv, shadowUv, instance.uvBounds, atlasSize) as Node<'vec4'>;
   const layer = TSL.int(instance.pageIndex);
   const baseSample = TSL.texture(resources.atlas, clamped.xy).depth(layer);
   const shadowSample = TSL.texture(resources.atlas, clamped.zw).depth(layer);
-  const distances = (
-    t3.toTSL(() => {
-      'use gpu';
-      return msdfDistances(
-        t3.fromTSL(baseSample, d.vec4f).$,
-        t3.fromTSL(atlasUv, d.vec2f).$,
-        t3.fromTSL(atlasSize, d.vec2f).$,
-        resources.pixelRange,
-      );
-    }) as Node<'vec3'>
-  ).toVar();
-  const coverage = t3.toTSL(() => {
-    'use gpu';
-    return msdfCoverageFromDistances(
-      MsdfCoverageInput({
-        atlasCoordinate: t3.fromTSL(atlasUv, d.vec2f).$,
-        shadowCoordinate: t3.fromTSL(shadowUv, d.vec2f).$,
-        uvBounds: t3.fromTSL(instance.uvBounds, d.vec4f).$,
-        atlasSize: t3.fromTSL(atlasSize, d.vec2f).$,
-        pixelRange: resources.pixelRange,
-        baseSample: t3.fromTSL(baseSample, d.vec4f).$,
-        shadowSample: t3.fromTSL(shadowSample, d.vec4f).$,
-        outlineWidth: t3.fromTSL(instance.outlineWidth, d.f32).$,
-      }),
-      t3.fromTSL(distances, d.vec3f).$,
-    );
-  }) as Node<'vec3'>;
-  const composite = t3.toTSL(() => {
-    'use gpu';
-    return msdfComposite(
-      MsdfCompositeInput({
-        coverage: t3.fromTSL(coverage, d.vec3f).$,
-        fillColor: t3.fromTSL(instance.fillColor, d.vec4f).$,
-        outlineColor: t3.fromTSL(outlineColor, d.vec4f).$,
-        shadowColor: t3.fromTSL(shadowColor, d.vec4f).$,
-      }),
-    );
-  }) as Node<'vec4'>;
+  const distances = distancesOf(baseSample, atlasUv, atlasSize, pixelRange) as Node<'vec3'>;
+  const coverage = coverageOf(
+    atlasUv,
+    shadowUv,
+    instance.uvBounds,
+    atlasSize,
+    pixelRange,
+    baseSample,
+    shadowSample,
+    instance.outlineWidth,
+    distances,
+  ) as Node<'vec3'>;
+  const color = composite(coverage, instance.fillColor, outlineColor, shadowColor) as Node<'vec4'>;
   return {
     position,
     atlasUv,
@@ -125,7 +142,7 @@ export function msdfShader(instance: TslMsdfInstanceNodes, resources: TslMsdfSha
     fillCoverage: coverage.x,
     outlineCoverage: coverage.y,
     shadowCoverage: coverage.z,
-    color: composite.rgb,
-    opacity: composite.a,
+    color: color.rgb,
+    opacity: color.a,
   };
 }

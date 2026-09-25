@@ -51,8 +51,8 @@ const gpu = {
 
 test('atlas addressing matches the TSL realization', () => {
   const tslFlat = flatten(tsl.plain.fragment);
-  assert.match(tslFlat, /fnbitmapAtlasUv\(/);
-  assert.match(tslFlat, /returnbitmapAtlasUv\(/);
+  assert.match(tslFlat, /fnbitmapAtlasUv_tsl\(/);
+  assert.match(tslFlat, /=bitmapPageTexelCoordinate_tsl\([^;]*bitmapAtlasUv_tsl\(/);
 
   const gpuFlat = flatten(gpu.vertex);
   assert.match(gpuFlat, /\(uvOrigin\.x\+\(quadUv\.x\*uvSize\.x\)\)/);
@@ -61,7 +61,7 @@ test('atlas addressing matches the TSL realization', () => {
 
 test('quad placement matches the TSL realization, including the y flip', () => {
   const tslFlat = flatten(tsl.plain.vertex);
-  assert.match(tslFlat, /fnbitmapQuadPosition\(/);
+  assert.match(tslFlat, /fnbitmapQuadPosition_tsl\(/);
   assert.match(tslFlat, /-\(\(origin\.y\+\(quadPosition\.y\*size\.y\)\)\),0f\)/);
 
   const gpuFlat = flatten(gpu.vertex);
@@ -71,7 +71,7 @@ test('quad placement matches the TSL realization, including the y flip', () => {
 
 test('coverage is an exact clamped texel fetch on both sides', () => {
   const tslFetch = flatten(tsl.plain.fragment);
-  assert.match(tslFetch, /fnbitmapPageTexelCoordinate\(/);
+  assert.match(tslFetch, /fnbitmapPageTexelCoordinate_tsl\(/);
   assert.match(tslFetch, /textureDimensions\(/);
   assert.match(tslFetch, /floor\(/);
   assert.match(tslFetch, /clamp\(flooredCoord/);
@@ -88,14 +88,14 @@ test('coverage is an exact clamped texel fetch on both sides', () => {
 
 test('paint composition scales alpha by coverage identically', () => {
   const tslPaint = flatten(tsl.plain.fragment);
-  assert.match(tslPaint, /fnbitmapPaint\(/);
+  assert.match(tslPaint, /fnbitmapPaint_tsl\(/);
   assert.match(tslPaint, /\(color\.a\*coverage\)/);
   assert.match(flatten(gpu.fragment), /\(color\.a\*coverage\)/);
 });
 
 test('pixel snapping rounds projected axes onto whole physical pixels identically', () => {
   const tslSnap = flatten(tsl.snapped.vertex);
-  assert.match(tslSnap, /fnsnapClipAxis\(/);
+  assert.match(tslSnap, /fnsnapClipAxis_tsl\(/);
   assert.match(tslSnap, /round\(/);
   assert.match(tslSnap, /\(clipAxis\*\(1f\/clipW\)\)/);
   assert.match(tslSnap, /\(round\(physicalPosition\)\*\(1f\/physicalSize\)\)/);
